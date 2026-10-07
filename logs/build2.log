@@ -1,0 +1,50 @@
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.05kB 0.0s done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from backend.Dockerfile
+#2 transferring dockerfile: 1.33kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/python:3.11-slim
+#3 DONE 1.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 13.07kB 0.0s done
+#5 DONE 0.0s
+
+#6 [1/6] FROM docker.io/library/python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7
+#6 resolve docker.io/library/python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7 0.0s done
+#6 DONE 0.0s
+
+#7 [4/6] COPY requirements.txt .
+#7 CACHED
+
+#8 [2/6] WORKDIR /app
+#8 CACHED
+
+#9 [3/6] RUN apt-get update  && apt-get install -y --no-install-recommends         ca-certificates curl build-essential  && rm -rf /var/lib/apt/lists/*
+#9 CACHED
+
+#10 [5/6] RUN pip install --upgrade pip && pip install -r requirements.txt
+#10 CACHED
+
+#11 [6/6] COPY . /app/backend
+#11 DONE 0.1s
+
+#12 exporting to image
+#12 exporting layers 0.1s done
+#12 exporting manifest sha256:ede9333df8e60b16f958b59182eda32b024f870074560d8972238954516bf77a 0.0s done
+#12 exporting config sha256:7e1c9544de452f089c1e4da7f31536cf1c8b697e8890e325f08c05ab6d539411 0.0s done
+#12 exporting attestation manifest sha256:fdb047c077434952b5a6823b749e2d44b9d1724775056210f48fef4d2ffbc08a 0.0s done
+#12 exporting manifest list sha256:1fc95a77102d4340867b99f15a979b9d4cc0508e8f84e5fcc7b988c52106bbce 0.0s done
+#12 naming to docker.io/library/agentforge-api:dev done
+#12 unpacking to docker.io/library/agentforge-api:dev 0.1s done
+#12 DONE 0.3s
+
+#13 resolving provenance for metadata file
+#13 DONE 0.0s

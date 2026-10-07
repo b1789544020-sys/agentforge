@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgentForge</title>
+    <script>
+      // Synchronously apply the saved language BEFORE React mounts, so the
+      // browser never paints a flash of the wrong language and so the
+      // <html lang> attribute is correct from the very first frame.
+      (function () {
+        try {
+          var saved = localStorage.getItem("agentforge.lang");
+          var nav = (navigator.language || "en").toLowerCase();
+          var lang = saved === "en" || saved === "zh"
+            ? saved
+            : (nav.indexOf("zh") === 0 ? "zh" : "en");
+          document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+        } catch (e) {
+          // ignore
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

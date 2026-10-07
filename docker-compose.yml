@@ -1,0 +1,183 @@
+name: agentforge
+
+# ──────────────────────────────────────────────────────────────
+#  AgentForge local stack
+#  ──────────────────────────────────────────────────────────────
+#  Bring everything up with:
+#      docker compose up --build
+#
+#  Exposed endpoints:
+#      frontend   → http://localhost:5173  (React dev server)
+#      api        → http://localhost:8000  (FastAPI)
+#      api/docs   → http://localhost:8000/docs  (Swagger UI)
+#      chromadb   → http://localhost:8001  (REST API, no UI)
+#
+#  Notes
+#  ─────
+#  * The sandbox container is *not* a privileged docker-in-docker
+#    runner.  Agent tools can shell-out to `docker run` against the
+#    shared docker socket and execute untrusted code inside a fresh
+#    throwaway container.  This is the safest default on Linux/macOS
+#    hosts.  On Windows / Docker Desktop, mount the socket only if you
+#    understand the security implications.
+#  * If you don't need vector memory, comment out the `chromadb`
+#    service and set `AGENTFORGE_VECTOR_BACKEND=none` in the api env.
+#  * Secrets (OpenAI / Anthropic keys) are read from your shell env at
+#    compose-time.  They are never baked into the image.
+# ──────────────────────────────────────────────────────────────
+
+x-common-env: &common-env
+  AGENTFORGE_DATABASE_URL: ${AGENTFORGE_DATABASE_URL:-sqlite:///./data/agentforge.db}
+  AGENTFORGE_LLM_PROVIDER: ${AGENTFORGE_LLM_PROVIDER:-mock}
+  AGENTFORGE_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  AGENTFORGE_OPENAI_MODEL: ${AGENTFORGE_OPENAI_MODEL:-gpt-4o-mini}
+  AGENTFORGE_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  AGENTFORGE_ANTHROPIC_MODEL: ${AGENTFORGE_ANTHROPIC_MODEL:-claude-3-5-sonnet-latest}
+  AGENTFORGE_MAX_STEPS: ${AGENTFORGE_MAX_STEPS:-10}
+  AGENTFORGE_MAX_TOKENS: ${AGENTFORGE_MAX_TOKENS:-8000}
+  # Vector memory
+  AGENTFORGE_VECTOR_BACKEND: ${AGENTFORGE_VECTOR_BACKEND:-chromadb}
+  AGENTFORGE_VECTOR_URL: http://chromadb:8000
+  # Sandbox
+  AGENTFORGE_SANDBOX_MODE: ${AGENTFORGE_SANDBOX_MODE:-docker}
+  AGENTFORGE_SANDBOX_IMAGE: ${AGENTFORGE_SANDBOX_IMAGE:-agentforge-sandbox}
+  AGENTFORGE_SANDBOX_NETWORK: agentforge_agentforge-net
+
+services:
+
+  # ─── 1. FastAPI backend (the brain) ─────────────────────────
+  agentforge-api:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend.Dockerfile
+    image: agentforge-api:dev
+    container_name: agentforge-api
+    restart: unless-stopped
+    # .env 文件是可选的：如果项目根目录有 .env 则读取，没有也不报错
+    # （所有变量都在下面 x-common-env 里给了默认值）。
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      <<: *common-env
+    volumes:
+      # Persist the SQLite DB + uploaded files across restarts.
+      - ./data:/app/data
+      # Allow the api to spawn sibling sandbox containers via the host
+      # docker socket.  Comment out the next line for a "no docker
+      # access" deployment.
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; \
+        sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=2).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      agentforge-sandbox:
+        condition: service_started
+      chromadb:
+        condition: service_healthy
+    networks:
+      - agentforge-net
+
+  # ─── 2. React dev server (Vite) ─────────────────────────────
+  agentforge-frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/frontend.Dockerfile
+    image: agentforge-frontend:dev
+    container_name: agentforge-frontend
+    restart: unless-stopped
+    environment:
+      # Vite reads VITE_* at build time.  The default points at the
+      # api's unversioned `/api/...` alias (see backend/app/main.py).
+      # Set VITE_API_BASE in your shell to override (e.g. to a
+      # non-localhost host when running the browser on a different
+      # machine than the stack).
+      VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8000/api}
+    # Bind-mount the source tree so that edits on the Windows host
+    # are picked up by Vite HMR *immediately* (no `docker compose
+    # up --build` round-trip).  node_modules and the Vite cache
+    # are kept inside the image via the named anon-volume below so
+    # the host tree stays clean.
+    volumes:
+      - ./frontend/src:/app/src
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      agentforge-api:
+        condition: service_healthy
+    networks:
+      - agentforge-net
+
+  # ─── 3. Sandbox (where agent-generated code actually runs) ───
+  agentforge-sandbox:
+    # Tiny Python 3.11 base image.  The FastAPI service spawns short
+    # -lived `docker run --rm agentforge-sandbox …` invocations against
+    # the host docker socket to execute untrusted code; this container
+    # is the *template* image, not a long-running daemon.  The
+    # `command:` below keeps a placeholder process so `docker compose
+    # up` doesn't immediately exit.  Feel free to remove it once you
+    # start running real tool calls.
+    image: ${AGENTFORGE_SANDBOX_IMAGE:-agentforge-sandbox}
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+    container_name: agentforge-sandbox
+    working_dir: /workspace
+    read_only: true
+    tmpfs:
+      - /workspace:size=64m
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 0.5
+    networks:
+      - agentforge-net
+    command: ["python", "-c", "print('AgentForge sandbox template image ready')"]
+
+  # ─── 4. ChromaDB (vector memory) ────────────────────────────
+  chromadb:
+    image: chromadb/chroma:0.5.20
+    container_name: agentforge-chromadb
+    restart: unless-stopped
+    environment:
+      # Persist the local `chroma/` volume; reset with `docker compose
+      # down -v` when you want a clean slate.
+      ANONYMIZED_TELEMETRY: "False"
+      ALLOW_RESET: "True"
+      IS_PERSISTENT: "True"
+      PERSIST_DIRECTORY: /chroma/chroma
+    volumes:
+      - chroma-data:/chroma/chroma
+    ports:
+      - "8001:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; \
+        sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat', timeout=2).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - agentforge-net
+
+volumes:
+  chroma-data:
+    name: agentforge-chroma-data
+
+networks:
+  agentforge-net:
+    name: agentforge-net
+    driver: bridge

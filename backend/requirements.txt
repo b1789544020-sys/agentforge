@@ -1,0 +1,52 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+
+# Data validation
+pydantic==2.10.3
+pydantic-settings==2.7.0
+
+# Database
+sqlalchemy==2.0.36
+alembic==1.14.0
+aiosqlite==0.20.0
+
+# LLM
+openai==1.59.7
+anthropic==0.39.0
+tiktoken==0.8.0
+
+# Async / HTTP
+httpx==0.28.1
+aiohttp==3.11.10
+
+# Sandbox
+docker==7.1.0
+
+# Auth
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Utilities
+python-dotenv==1.0.1
+tenacity==9.0.0
+structlog==24.4.0
+rich==13.9.4
+typer==0.16.0  # 0.1.2 release packaging — `agentforge` CLI; >=0.16 needed for Python 3.14 help-rendering fix
+pyyaml==6.0.3  # 0.1.2 #7 轮 — Agent YAML 导入/导出
+
+# CORS
+fastapi-cors==0.0.6
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.0
+pytest-cov==6.0.0
+httpx==0.28.1
+respx==0.22.0
+
+# Dev
+black==24.10.0
+ruff==0.8.4
+mypy==1.13.0

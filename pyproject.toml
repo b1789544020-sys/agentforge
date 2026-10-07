@@ -1,0 +1,141 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentforge"
+version = "0.1.2"
+description = "A small but production-shaped agent platform: LLM agent loop, memory, tools, evals, and import/export."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "AgentForge Contributors" },
+]
+keywords = ["agent", "llm", "fastapi", "memory", "evals", "tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
+# Runtime dependencies, lifted from backend/requirements.txt and de-duplicated.
+# httpx appears in both the "Async / HTTP" and "Testing" sections upstream;
+# it is listed once here at the version both groups wanted.
+dependencies = [
+    # Web framework
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.32.1",
+    "python-multipart==0.0.20",
+    # Data validation
+    "pydantic==2.10.3",
+    "pydantic-settings==2.7.0",
+    # Database
+    "sqlalchemy==2.0.36",
+    "alembic==1.14.0",
+    "aiosqlite==0.20.0",
+    # LLM
+    "openai==1.59.7",
+    "anthropic==0.39.0",
+    "tiktoken==0.8.0",
+    # Async / HTTP
+    "httpx==0.28.1",
+    "aiohttp==3.11.10",
+    # Sandbox
+    "docker==7.1.0",
+    # Auth
+    "python-jose[cryptography]==3.3.0",
+    "passlib[bcrypt]==1.7.4",
+    # Utilities
+    "python-dotenv==1.0.1",
+    "tenacity==9.0.0",
+    "structlog==24.4.0",
+    "rich==13.9.4",
+    "typer==0.16.0",  # CLI; >=0.16 fixes help-rendering on Python 3.14
+    "pyyaml==6.0.3",
+    # CORS
+    "fastapi-cors==0.0.6",
+]
+
+[project.optional-dependencies]
+# Install with:  pip install -e ".[dev]"
+dev = [
+    "pytest==8.3.4",
+    "pytest-asyncio==0.25.0",
+    "pytest-cov==6.0.0",
+    "respx==0.22.0",
+    "black==24.10.0",
+    "ruff==0.8.4",
+    "mypy==1.13.0",
+]
+# Optional vector backends.  Default install is hashing-trick in-process.
+vector = [
+    # "chromadb>=0.5",   # uncomment when ChromaDB is the chosen backend
+    # "pgvector>=0.3",    # uncomment for PostgreSQL pgvector backend
+]
+
+[project.scripts]
+# After `pip install -e .`, these are on PATH:
+agentforge = "app.__main__:main"
+
+[project.urls]
+# "Homepage" / "Repository" point at the workspace today; replace before
+# publishing to a forge (GitHub/GitLab) or PyPI.
+Homepage = "./"
+Repository = "./"
+Issues = "./"
+
+[tool.setuptools]
+# The backend package is the only thing shipped.  The ``backend/tests``
+# directory is excluded by default because we only include ``app`` below.
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+include = ["app*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+# Static assets shipped alongside the Python package.
+"app" = ["py.typed"]
+
+# ----------------------------------------------------------------------------
+# Tooling configuration (kept here so black/ruff/mypy/pytest have one home).
+# ----------------------------------------------------------------------------
+
+[tool.black]
+line-length = 100
+target-version = ["py311", "py312", "py313"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "SIM", "RUF"]
+ignore = [
+    "E501",  # line length — black handles it
+    "B008",  # function calls in defaults (FastAPI Depends pattern)
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict_optional = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+testpaths = ["backend/tests"]
+addopts = "-ra --tb=short"

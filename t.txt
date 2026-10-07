@@ -1,0 +1,19 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\86159\Desktop\agentforge\backend
+configfile: pytest.ini
+plugins: anyio-4.14.2, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+backend\tests\test_memory_vector.py F                                    [100%]
+
+================================== FAILURES ===================================
+_____________ TestVectorStoreProtocol.test_unknown_backend_raises _____________
+backend\tests\test_memory_vector.py:222: in test_unknown_backend_raises
+    with pytest.raises(ValueError, match="Unknown vector backend"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE ValueError
+=========================== short test summary info ===========================
+FAILED backend\tests\test_memory_vector.py::TestVectorStoreProtocol::test_unknown_backend_raises
+============================== 1 failed in 0.36s ==============================

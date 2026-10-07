@@ -1,0 +1,98 @@
+# ── Python ──────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+env/
+
+# ── Scratch / 调试临时文件 ──────────────
+# 仓库自带的临时目录永远不跟踪。
+.scratch/
+
+# 本地诊断 / 一次性调试目录（从桌面收拢过来的脚手架）
+backend/tests/_local_diagnostics/
+backend/tests/_local_diagnostics/**
+
+# 以 `_` 开头的文件/目录是临时调试/烟测/日志产物，
+# 出现在仓库任意子目录都忽略（不只忽略根目录）。
+#
+# 覆盖：_dbg.py / _dbg2_out.txt / _fix.py / _smoke.py / _dedup.py /
+#       _gen_tools.py / _out1.txt / _full.txt / _loop_out.txt /
+#       _loopout.txt / _newtest.out / _probe3_out.txt /
+#       _runner_api.out / _pip.log / _run.bat / _ra_tests.bat /
+#       _runall.py / _test_output.log / _dump_*.py / _diag*.py …
+**/_*.py
+**/_*.pyc
+**/_*.txt
+**/_*.log
+**/_*.out
+**/_*.md
+**/_*.json
+**/_*.html
+**/_*.bat
+**/_*.ps1
+**/_*.sh
+**/_*.sql
+**/_*.csv
+**/_*.yml
+**/_*.yaml
+**/_*.ini
+**/_*.toml
+**/_*.env
+**/_*.bak
+**/_*.tmp
+
+# 兜底：项目自带 _verify_*/_audit_*/_smoke* 那种"下划线 + 短描述"的脚本。
+# 上面 `**/_*.py` 已经覆盖，但再加一行防止个别没扩展名的探针文件漏网。
+**/_*
+
+# ── AgentForge runtime artifacts ───────
+backend/agentforge.db
+backend/agentforge.db-journal
+backend/storage/
+backend/data/
+backend/.data/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# pytest / 单文件脚本直接重定向到的输出（不只限 _*）
+backend/*.out
+backend/*.log
+
+# ── Node / Frontend ─────────────────────
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── IDE / Editor ────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ──────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
