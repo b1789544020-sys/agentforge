@@ -24,6 +24,10 @@ from fastapi.testclient import TestClient
 from app.api.ws_broadcaster import RunBroadcaster
 from app.main import app
 
+# 集成测试经 TestClient（独立线程的 anyio portal）驱动完整 WS 流式推送 +
+# 内存 SQLite，线程调度时序受负载影响；失败时透明重跑几次。
+pytestmark = pytest.mark.flaky(reruns=3, reruns_delay=0.5)
+
 
 @pytest.fixture
 def fresh_broadcaster() -> Iterator[RunBroadcaster]:

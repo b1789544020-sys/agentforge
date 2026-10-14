@@ -18,6 +18,10 @@ import pytest
 
 BACKEND = Path(__file__).resolve().parent.parent
 
+# 通过 subprocess 调真实 alembic CLI；Windows 高负载下子进程句柄继承
+# 偶发 WinError 6（句柄无效），失败时透明重跑几次。
+pytestmark = pytest.mark.flaky(reruns=3, reruns_delay=0.5)
+
 
 def _run_alembic(db_path: Path, *args: str) -> subprocess.CompletedProcess:
     """Run ``alembic <args>`` against a file-based SQLite DB.

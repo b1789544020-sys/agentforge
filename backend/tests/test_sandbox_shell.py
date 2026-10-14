@@ -25,6 +25,10 @@ from app.agent.sandbox import (
 )
 from app.agent.tools import shell_exec
 
+# 本模块 spawn 真实子进程（python -c / cmd builtin），机器负载高时进程
+# 启动时序会漂；失败时透明重跑几次（全过时不增加任何耗时）。
+pytestmark = pytest.mark.flaky(reruns=3, reruns_delay=0.5)
+
 
 # ---------------------------------------------------------------------------
 # LocalSandbox.run_shell

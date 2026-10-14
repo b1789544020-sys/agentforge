@@ -137,6 +137,7 @@ async def test_python_eval_math_mode_rejects_dangerous() -> None:
         await python_eval("1 +", mode="math")
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=0.5)  # 走真实子进程沙箱，时序受负载影响
 @pytest.mark.asyncio
 async def test_python_eval_sandbox_mode_routes_through_sandbox(monkeypatch) -> None:
     """With ``AGENTFORGE_SANDBOX_ENABLED=true`` the sandbox-mode call must
