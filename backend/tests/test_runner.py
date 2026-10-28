@@ -24,7 +24,7 @@ os.environ.setdefault("AGENTFORGE_LLM_PROVIDER", "mock")
 import app.database as _db_mod  # noqa: E402
 from app.eval.runner import EvalRunner, RunEvalResult  # noqa: E402
 from app.eval.scorer import StatusScorer, get_scorer  # noqa: E402
-from app.models import Agent, EvalCase  # noqa: E402
+from app.models import Agent, EvalCase, EvalRun  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +223,20 @@ async def test_legacy_run_still_works() -> None:
     assert result.total == 2
     assert result.passed == 2
     assert result.failed == 0
+
+    # Regression: expunging the ORM rows before the per-case writes must not
+    # silently discard the legacy run's terminal aggregate.  The UI polls a
+    # fresh request/session and waits specifically for ``completed``.
+    async with _db_mod.async_session_factory() as s:
+        persisted = await s.get(EvalRun, result.eval_run_id)
+        assert persisted is not None
+        assert persisted.status == "completed"
+        assert persisted.total == 2
+        assert persisted.passed == 2
+        assert persisted.failed == 0
+        assert persisted.average_score == 1.0
+        assert persisted.finished_at is not None
+        assert len(json.loads(persisted.results)) == 2
 
 
 # ---------------------------------------------------------------------------

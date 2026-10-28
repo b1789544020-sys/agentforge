@@ -158,7 +158,7 @@ export default function EvalHeatmap({ agentId, runs, maxRuns = 8 }: EvalHeatmapP
         </div>
       </div>
       <p className="muted small">{t("eval.heatmap_subtitle")}</p>
-      {loading ? <div className="muted small">¡­</div> : null}
+      {loading ? <div className="muted small">â€¦</div> : null}
       <div className="heatmap-scroll">
         <svg
           role="img"
@@ -181,7 +181,7 @@ export default function EvalHeatmap({ agentId, runs, maxRuns = 8 }: EvalHeatmapP
                 fontSize="11"
                 fill="currentColor"
               >
-                {`${run.dataset_name} ¡¤ ${run.scorer}`}
+                {`${run.dataset} Â· ${run.scorer}`}
               </text>
             </g>
           ))}
@@ -195,7 +195,7 @@ export default function EvalHeatmap({ agentId, runs, maxRuns = 8 }: EvalHeatmapP
                 fontSize="12"
                 fill="currentColor"
               >
-                {row.input.length > 30 ? `${row.input.slice(0, 28)}¡­` : row.input}
+                {row.input.length > 30 ? `${row.input.slice(0, 28)}â€¦` : row.input}
               </text>
               {row.cells.map((cell, col) => {
                 if (!cell) {
@@ -216,11 +216,11 @@ export default function EvalHeatmap({ agentId, runs, maxRuns = 8 }: EvalHeatmapP
                   <g key={col}>
                     <title>
                       {t("eval.heatmap_cell_title", {
-                        dataset: visibleRuns[col]?.dataset_name ?? "",
+                        dataset: visibleRuns[col]?.dataset ?? "",
                         case: row.input,
                         score:
                           cell.score === null
-                            ? "¡ª"
+                            ? "ï¿½ï¿½"
                             : (cell.score * 100).toFixed(0) + "%",
                         passed: cell.passed ? "?" : "?",
                       })}
@@ -253,7 +253,7 @@ export default function EvalHeatmap({ agentId, runs, maxRuns = 8 }: EvalHeatmapP
                         fill={cellTextColour(cell.score)}
                       >
                         {cell.score === null
-                          ? "¡ª"
+                          ? "ï¿½ï¿½"
                           : (cell.score * 100).toFixed(0)}
                       </text>
                     )}

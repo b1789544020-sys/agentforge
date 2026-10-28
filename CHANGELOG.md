@@ -173,6 +173,14 @@ project adheres to [Semantic Versioning](https://semver.org/).
   REST contract exercised by `test_agent_lifecycle`.
 
 ### Fixed
+- **Inline-case evaluations now persist their terminal summary.**  The legacy
+  `EvalRunner.run` path writes `completed`, pass/fail counts, average score,
+  timing, and the per-case cache through a fresh session after expunging the
+  per-case rows.  The evaluation UI now reads the API's `dataset` /
+  `average_score` contract, calculates pass rate from passed / total, and
+  refreshes history summaries when a terminal run is opened.  A regression
+  test verifies the aggregate from a separate database session.
+
 - `on_conflict="error"` in the import endpoint already raised
   HTTP 409; the previous CHANGELOG note flagged it as still
   returning 400 but that was a stale observation — the

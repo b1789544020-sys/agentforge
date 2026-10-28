@@ -95,6 +95,9 @@ export default function AgentRun() {
     try {
       const detail = await Runs.get(agentId, runId);
       setActiveRun(detail);
+      setRuns((current) =>
+        current.map((run) => (run.id === runId ? detail : run)),
+      );
     } catch (e) {
       setError(String(e));
     }

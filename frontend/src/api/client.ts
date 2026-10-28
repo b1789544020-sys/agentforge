@@ -198,13 +198,15 @@ export interface EvalCaseResult extends EvalCase {
 export interface EvalRun {
   id: string;
   agent_id: string;
-  dataset_name: string;
+  dataset: string;
   scorer: string;
   pass_threshold: number;
   status: "pending" | "running" | "completed" | "failed";
   total: number;
   passed: number;
-  pass_rate: number;
+  failed: number;
+  average_score: number;
+  duration_ms: number;
   started_at: string;
   finished_at?: string;
   /**

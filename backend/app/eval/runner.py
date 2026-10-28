@@ -365,34 +365,40 @@ class EvalRunner:
         passed = sum(1 for r in results if r.passed)
         failed = len(results) - passed
         avg = (sum(r.score for r in results) / len(results)) if results else 0.0
-        run_row.passed = passed
-        run_row.failed = failed
-        run_row.average_score = avg
-        run_row.duration_ms = duration_ms
-        run_row.status = "success"
-        run_row.finished_at = datetime.utcnow()
-        # Keep the JSON blob on the run row as a denormalised cache so
-        # the list-runs endpoint can avoid an N+1 query.
-        run_row.results = json.dumps(
-            [
-                {
-                    "case_id": r.case_id,
-                    "input": r.input,
-                    "expected": r.expected,
-                    "output": r.output,
-                    "score": r.score,
-                    "passed": r.passed,
-                    "duration_ms": r.duration_ms,
-                    "tokens": r.tokens,
-                    "error": r.error,
-                    "meta": r.meta,
-                }
-                for r in results
-            ],
-            ensure_ascii=False,
-            default=str,
-        )
-        await self.session.commit()
+        # ``run_row`` was expunged before the per-case write.  Update the
+        # aggregate through a fresh session so the terminal state is actually
+        # persisted, and use the same ``completed`` state as ``run_eval`` and
+        # the frontend polling contract.
+        async with self._resolve_session_factory()() as agg_session:
+            persisted_run = await agg_session.get(EvalRun, eval_run_id)
+            if persisted_run is not None:
+                persisted_run.passed = passed
+                persisted_run.failed = failed
+                persisted_run.average_score = avg
+                persisted_run.duration_ms = duration_ms
+                persisted_run.status = "completed"
+                persisted_run.finished_at = datetime.utcnow()
+                # Denormalised per-case cache for the list-runs endpoint.
+                persisted_run.results = json.dumps(
+                    [
+                        {
+                            "case_id": r.case_id,
+                            "input": r.input,
+                            "expected": r.expected,
+                            "output": r.output,
+                            "score": r.score,
+                            "passed": r.passed,
+                            "duration_ms": r.duration_ms,
+                            "tokens": r.tokens,
+                            "error": r.error,
+                            "meta": r.meta,
+                        }
+                        for r in results
+                    ],
+                    ensure_ascii=False,
+                    default=str,
+                )
+                await _commit_with_retry(agg_session)
 
         return EvalResult(
             eval_run_id=eval_run_id,

@@ -194,7 +194,7 @@ export default function Evaluation() {
             <tbody>
               {evals.map((e) => (
                 <tr key={e.id}>
-                  <td>{e.dataset_name}</td>
+                  <td>{e.dataset}</td>
                   <td>
                     <code>{e.scorer}</code>
                   </td>
@@ -205,7 +205,7 @@ export default function Evaluation() {
                     {t("eval.pass_rate_value", {
                       passed: e.passed,
                       total: e.total,
-                      pct: (e.pass_rate * 100).toFixed(0),
+                      pct: ((e.total > 0 ? e.passed / e.total : 0) * 100).toFixed(0),
                     })}
                   </td>
                   <td className="muted">{new Date(e.started_at).toLocaleString()}</td>
