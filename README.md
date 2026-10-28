@@ -26,7 +26,6 @@ AgentForge 是一个端到端的 **LLM Agent 工作台**。你可以在网页上
 - [贡献与许可 · Contributing & license](#-contributing--license)
 - [🇨🇳 中文文档 · Chinese docs](docs/项目介绍.md) — 一句话读懂这个项目
 - [🇨🇳 项目实际是什么](docs/这个项目实际是什么.md) — 它能干什么、对谁有用
-- [🇨🇳 面试可能会被问到的问题](docs/AgentForge%20面试可能会被问到的问题.md) — 8 个核心问题 + 现场怎么答
 - [🇨🇳 零基础入门](docs/从零读懂%20agentforge（含操作步骤）.md) — 网页点击全程
 
 ---
