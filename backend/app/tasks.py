@@ -27,6 +27,7 @@ celery_app.conf.update(
     beat_schedule={
         "memory-ttl-cleanup": {"task": "agentforge.memory_cleanup", "schedule": 300.0},
         "stuck-run-watchdog": {"task": "agentforge.stuck_watchdog", "schedule": 60.0},
+        "quality-gate-scheduler": {"task": "agentforge.scheduled_gates", "schedule": 60.0},
     },
 )
 
@@ -105,6 +106,37 @@ def execute_eval_task(eval_run_id: str) -> None:
             )
 
     asyncio.run(execute())
+
+
+@celery_app.task(name="agentforge.execute_gate")
+def execute_gate_task(gate_run_id: str) -> None:
+    import uuid
+
+    from app.gates.service import execute_gate
+    from app.infra.redis import get_redis
+
+    async def execute() -> None:
+        redis = get_redis()
+        key = f"agentforge:task-lock:gate:{gate_run_id}"
+        owner = uuid.uuid4().hex
+        claimed = await redis.set(key, owner, nx=True, ex=settings.celery_task_time_limit_seconds + 300)
+        if not claimed:
+            return
+        try:
+            await execute_gate(gate_run_id)
+        finally:
+            await redis.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+                1, key, owner,
+            )
+
+    asyncio.run(execute())
+
+
+@celery_app.task(name="agentforge.scheduled_gates")
+def scheduled_gates_task() -> None:
+    from app.gates.service import execute_due_gates
+    asyncio.run(execute_due_gates())
 
 
 @celery_app.task(name="agentforge.memory_cleanup")

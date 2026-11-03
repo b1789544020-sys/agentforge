@@ -11,6 +11,7 @@ project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Quality gates and regression governance.** Agent saves now append immutable `AgentVersion` snapshots; fixed `EvalSuite` collections support manual/save/scheduled `GateRun` execution, persisted per-case failures and version diffs, threshold re-evaluation, reasoned admin bypass records, Celery dispatch, and a React quality-gate panel. See `docs/QUALITY_GATES.md` and `scripts/tests/quality_gate_e2e.py`.
 - **Production readiness stages 0–5.** Immutable Run/Eval snapshots and correct max-step termination; Qdrant and pluggable Chinese embeddings; additional LLM providers; unified evaluation, memory search and versioned Jinja prompts; Redis/Celery durable execution and cross-worker controls; JWT users/RBAC ownership; mandatory Docker sandbox options; JSON request logs, readiness/metrics, backup/restore and bounded load-test scripts. See `docs/PRODUCTION.md` for external acceptance items that remain unverified.
 
 - **Tool risk badge in trace UI (#9).**  Every `tool_call` step now

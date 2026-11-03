@@ -692,7 +692,9 @@ class AgentLoop:
         # ---- (1) explicit mock ------------------------------------------------
         if provider == "mock" or env_provider == "mock":
             return MockLLMClient(
-                model=self.agent.model or self.settings.openai_default_model or "mock-model"
+                model=self.agent.model or self.settings.openai_default_model or "mock-model",
+                reply=str(_safe_json_loads(self.agent.config, {}).get("mock_reply") or "Mock response (no upstream call)."),
+                replies=_safe_json_loads(self.agent.config, {}).get("mock_replies") or {},
             )
 
         # ---- (2) any non-mock provider with no key → mock ---------------------

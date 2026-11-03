@@ -228,6 +228,24 @@ input[type="checkbox"] {
   vertical-align: middle;
 }
 
+/* Quality gate panel */
+.gate-layout { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: var(--s-4); margin: var(--s-4) 0; }
+.suite-row { display: flex; width: 100%; text-align: left; flex-direction: column; align-items: flex-start; margin-bottom: var(--s-2); }
+.suite-row.active { border-color: var(--accent); background: var(--accent-soft); }
+.suite-row small { color: var(--muted); }
+.gate-case { border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--s-3); margin: var(--s-2) 0; }
+.gate-case strong { margin-right: var(--s-3); }
+.diff-row { border-left: 3px solid var(--border); padding: var(--s-2) var(--s-3); margin: var(--s-2) 0; }
+.diff-new_failure { border-left-color: var(--err); }
+.diff-fixed { border-left-color: var(--ok); }
+.badge.new_failure { color: var(--err); background: var(--err-soft); }
+.badge.fixed, .badge.passed { color: var(--ok); background: var(--ok-soft); }
+.badge.failed { color: var(--err); background: var(--err-soft); }
+.badge.pending, .badge.running, .badge.bypassed { color: var(--warn); background: var(--warn-soft); }
+.clickable { cursor: pointer; }
+@media (max-width: 800px) { .gate-layout { grid-template-columns: 1fr; } }
+
+
 /* =========================================================================
    App shell
    ========================================================================= */

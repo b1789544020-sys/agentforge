@@ -336,6 +336,78 @@ export const Evals = {
     api.post<EvalRun>(`/agents/${agentId}/evals/${evalId}/cancel`).then((r) => r.data),
 };
 
+export interface AgentVersion {
+  id: string;
+  agent_id: string;
+  version_number: number;
+  gate_status: "pending" | "passed" | "failed" | "bypassed";
+  snapshot: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface EvalSuite {
+  id: string;
+  name: string;
+  description?: string | null;
+  agent_id?: string | null;
+  case_ids: string[];
+  pass_threshold: number;
+  scorer: string;
+  enabled: boolean;
+  auto_on_save: boolean;
+}
+
+export interface GateCaseResult {
+  case_id: string;
+  input: string;
+  expected?: string | null;
+  output: string;
+  score: number;
+  passed: boolean;
+  error?: string | null;
+}
+
+export interface GateDiff {
+  case_id: string;
+  change: "new_failure" | "fixed" | "unchanged" | "new_case" | "removed";
+  previous_passed?: boolean | null;
+  current_passed?: boolean | null;
+  answer_diff: string;
+}
+
+export interface GateRun {
+  id: string;
+  agent_version_id: string;
+  suite_id: string;
+  baseline_gate_id?: string | null;
+  trigger_source: "save" | "manual" | "scheduled";
+  status: "pending" | "running" | "passed" | "failed";
+  pass_rate: number;
+  threshold: number;
+  failed_case_ids: string[];
+  details: GateCaseResult[];
+  diff: GateDiff[];
+  error?: string | null;
+  created_at: string;
+}
+
+export const QualityGates = {
+  versions: (agentId: string) =>
+    api.get<AgentVersion[]>(`/agents/${agentId}/versions`).then((r) => r.data),
+  suites: (agentId: string) =>
+    api.get<EvalSuite[]>("/suites", { params: { agent_id: agentId } }).then((r) => r.data),
+  createSuite: (data: { name: string; agent_id: string; case_ids: string[]; pass_threshold: number }) =>
+    api.post<EvalSuite>("/suites", { ...data, auto_on_save: false }).then((r) => r.data),
+  list: (agentId: string, suiteId?: string) =>
+    api.get<GateRun[]>(`/agents/${agentId}/gates`, { params: suiteId ? { suite_id: suiteId } : {} }).then((r) => r.data),
+  get: (agentId: string, gateId: string) =>
+    api.get<GateRun>(`/agents/${agentId}/gates/${gateId}`).then((r) => r.data),
+  trigger: (agentId: string, agentVersionId: string, suiteId: string) =>
+    api.post<GateRun>(`/agents/${agentId}/gates`, {
+      agent_version_id: agentVersionId, suite_id: suiteId,
+    }).then((r) => r.data),
+};
+
 export interface User {
   id: string | null;
   email: string | null;

@@ -1002,6 +1002,20 @@ async def shell_exec(command: str, **kwargs: Any) -> Dict[str, Any]:
                 )
             else:
                 raise
+        except OSError as exc:
+            # Python 3.14 on Windows can report a missing executable as
+            # WinError 6 instead of FileNotFoundError.  Preserve the tool's
+            # structured-error contract only when PATH confirms it is absent.
+            import shutil as _shutil
+            import sys as _sys
+            if (_sys.platform == "win32" and getattr(exc, "winerror", None) == 6
+                    and _shutil.which(command) is None):
+                return {
+                    "exit_code": -1, "stdout": "",
+                    "stderr": f"executable not found: {command!r} ({exc})"[:4000],
+                    "timed_out": False,
+                }
+            raise
 
         try:
             stdout_b, stderr_b = await _asyncio.wait_for(

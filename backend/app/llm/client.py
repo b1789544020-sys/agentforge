@@ -1485,6 +1485,7 @@ class MockLLMClient(LLMClient):
         reply: str = "Mock response (no upstream call).",
         model: str = "mock-model",
         responses: Optional[list[ChatResult]] = None,
+        replies: Optional[dict[str, str]] = None,
     ) -> None:
         # Skip the parent's __init__ entirely – we don't need an httpx
         # client, timeouts or retry state.
@@ -1498,6 +1499,7 @@ class MockLLMClient(LLMClient):
         # ``_llm_final(text)`` and ``_llm_tool_call(name, args)``.
         self._responses: list[ChatResult] = list(responses or [])
         self._fallback = bool(self._responses)
+        self._replies = dict(replies or {})
 
     async def chat(  # type: ignore[override]
         self,
@@ -1515,6 +1517,13 @@ class MockLLMClient(LLMClient):
         # agent to see.
         if self._responses:
             return self._responses.pop(0)
+        if self._replies:
+            latest = next((str(msg.get("content") or "") for msg in reversed(messages)
+                           if msg.get("role") == "user"), "")
+            return ChatResult(
+                content=self._replies.get(latest, self.reply), tool_calls=[],
+                prompt_tokens=10, completion_tokens=5, finish_reason="stop", raw={"mock": True},
+            )
         # By default the mock returns a single final assistant reply so
         # the agent loop terminates in one LLM hop.  When tools are
         # supplied we *do* make one tool call on the very first turn

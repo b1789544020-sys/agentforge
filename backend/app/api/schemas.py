@@ -294,6 +294,52 @@ class MemoryOut(OrmModel):
 
 
 # ---------------------------------------------------------------------------
+# Quality gates
+# ---------------------------------------------------------------------------
+
+
+class EvalSuiteCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str | None = None
+    agent_id: str | None = None
+    case_ids: list[str] = Field(..., min_length=1)
+    pass_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    scorer: str = "composite"
+    enabled: bool = True
+    auto_on_save: bool = True
+    schedule_interval_seconds: int | None = Field(default=None, ge=1)
+
+
+class EvalSuiteUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+    case_ids: list[str] | None = Field(default=None, min_length=1)
+    pass_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    scorer: str | None = None
+    enabled: bool | None = None
+    auto_on_save: bool | None = None
+    schedule_interval_seconds: int | None = Field(default=None, ge=1)
+
+
+class GateTrigger(BaseModel):
+    agent_version_id: str
+    suite_id: str
+    trigger_source: str = Field(default="manual", pattern="^(manual|scheduled|save)$")
+
+
+class GatePolicyUpdate(BaseModel):
+    default_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    enforce: bool | None = None
+    allow_bypass: bool | None = None
+    notify_to: list[str] | None = None
+
+
+class GateBypassCreate(BaseModel):
+    gate_run_id: str | None = None
+    reason: str = Field(..., min_length=3, max_length=2000)
+
+
+# ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------
 class HealthOut(BaseModel):
@@ -343,6 +389,11 @@ __all__ = [
     "EvalCaseOut",
     "EvalRunOut",
     "EvalUploadResponse",
+    "EvalSuiteCreate",
+    "EvalSuiteUpdate",
+    "GateTrigger",
+    "GatePolicyUpdate",
+    "GateBypassCreate",
     "MemoryIn",
     "MemoryOut",
     "HealthOut",

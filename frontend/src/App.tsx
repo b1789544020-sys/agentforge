@@ -4,9 +4,10 @@ import AgentConfig from "./pages/AgentConfig";
 import AgentRun from "./pages/AgentRun";
 import Evaluation from "./pages/Evaluation";
 import PromptTemplates from "./pages/PromptTemplates";
+import QualityGatePanel from "./pages/QualityGates";
 import LanguageToggle from "./components/LanguageToggle";
 
-type Tab = "config" | "run" | "eval" | "prompts";
+type Tab = "config" | "run" | "eval" | "prompts" | "gates";
 
 export default function App() {
   const { t } = useTranslation();
@@ -17,6 +18,7 @@ export default function App() {
     { id: "run", label: t("app.tab_run") },
     { id: "eval", label: t("app.tab_eval") },
     { id: "prompts", label: t("app.tab_prompts") },
+    { id: "gates", label: "质量门禁" },
   ];
 
   return (
@@ -48,6 +50,7 @@ export default function App() {
         {tab === "run" && <AgentRun />}
         {tab === "eval" && <Evaluation />}
         {tab === "prompts" && <PromptTemplates />}
+        {tab === "gates" && <QualityGatePanel />}
       </main>
     </div>
   );

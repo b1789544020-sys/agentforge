@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,7 @@ from app.agent.exporter import (
     load as load_payload,
 )
 from app.agent.memory import MemoryItem, MemoryStore
+from app.agent.versions import create_agent_version
 from app.agent.tools import ToolRegistry
 from app.api.schemas import (
     AgentCreate,
@@ -32,6 +33,8 @@ from app.api.schemas import (
     ToolOut,
 )
 from app.database import get_session
+from app.dispatch import submit_gate
+from app.gates.service import create_automatic_gates
 from app.models import Agent, Memory
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -89,7 +92,8 @@ async def list_agents(
 
 @router.post("", response_model=AgentOut, status_code=status.HTTP_201_CREATED)
 async def create_agent(
-    payload: AgentCreate, request: Request, session: AsyncSession = Depends(get_session)
+    payload: AgentCreate, request: Request, background: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     agent = Agent(
         id=str(uuid.uuid4()),
@@ -107,7 +111,16 @@ async def create_agent(
         updated_at=datetime.utcnow(),
     )
     session.add(agent)
+    await session.flush()
+    version = await create_agent_version(
+        session, agent, created_by=get_principal(request).user_id
+    )
     await session.commit()
+    gates = await create_automatic_gates(
+        session, version, triggered_by=get_principal(request).user_id
+    )
+    for gate in gates:
+        submit_gate(gate.id, background)
     await session.refresh(agent)
     return _serialize_agent(agent)
 
@@ -126,6 +139,8 @@ async def get_agent(
 async def update_agent(
     agent_id: str,
     payload: AgentUpdate,
+    request: Request,
+    background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     agent = await session.get(Agent, agent_id)
@@ -141,7 +156,16 @@ async def update_agent(
     for k, v in data.items():
         setattr(agent, k, v)
     agent.updated_at = datetime.utcnow()
+    await session.flush()
+    version = await create_agent_version(
+        session, agent, created_by=get_principal(request).user_id
+    )
     await session.commit()
+    gates = await create_automatic_gates(
+        session, version, triggered_by=get_principal(request).user_id
+    )
+    for gate in gates:
+        submit_gate(gate.id, background)
     await session.refresh(agent)
     return _serialize_agent(agent)
 
@@ -235,6 +259,7 @@ async def export_agents(
 @router.post("/import", response_model=dict)
 async def import_agents(
     request: Request,
+    background: BackgroundTasks,
     file: UploadFile = File(...),
     on_conflict: str = Form("skip"),
     fmt: str | None = Form(None),
@@ -278,6 +303,7 @@ async def import_agents(
     updated: list[str] = []
     skipped: list[str] = []
     owner_id = _owner_filter(request)
+    versions: list[Any] = []
     for row in rows:
         name = row["name"]
         stmt = select(Agent).where(Agent.name == name)
@@ -303,6 +329,10 @@ async def import_agents(
             existing.tools = json.dumps(row.get("tools") or [], ensure_ascii=False)
             existing.config = json.dumps(row.get("config") or {}, ensure_ascii=False)
             existing.updated_at = datetime.utcnow()
+            await session.flush()
+            versions.append(await create_agent_version(
+                session, existing, created_by=get_principal(request).user_id
+            ))
             updated.append(name)
             continue
 
@@ -326,9 +356,19 @@ async def import_agents(
             updated_at=datetime.utcnow(),
         )
         session.add(agent)
+        await session.flush()
+        versions.append(await create_agent_version(
+            session, agent, created_by=get_principal(request).user_id
+        ))
         created.append(name)
 
     await session.commit()
+    for version in versions:
+        gates = await create_automatic_gates(
+            session, version, triggered_by=get_principal(request).user_id
+        )
+        for gate in gates:
+            submit_gate(gate.id, background)
     return {
         "ok": True,
         "format": detected,

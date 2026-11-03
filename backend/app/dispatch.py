@@ -62,4 +62,13 @@ def submit_eval(eval_run_id: str, background: BackgroundTasks) -> None:
     background.add_task(execute_eval, eval_run_id)
 
 
-__all__ = ["submit_run", "submit_resume", "submit_eval"]
+def submit_gate(gate_run_id: str, background: BackgroundTasks) -> None:
+    if get_settings().task_backend == "celery":
+        from app.tasks import execute_gate_task
+        execute_gate_task.delay(gate_run_id)
+        return
+    from app.gates.service import execute_gate
+    background.add_task(execute_gate, gate_run_id)
+
+
+__all__ = ["submit_run", "submit_resume", "submit_eval", "submit_gate"]

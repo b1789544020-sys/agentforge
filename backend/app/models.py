@@ -657,6 +657,137 @@ class EvalRun(Base):
 
 
 # ---------------------------------------------------------------------------
+# Agent versions and quality gates
+# ---------------------------------------------------------------------------
+
+
+class AgentVersion(Base):
+    """Immutable runtime configuration captured whenever an Agent is saved."""
+
+    __tablename__ = "agent_versions"
+    __table_args__ = (UniqueConstraint("agent_id", "version_number", name="uq_agent_version_number"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    agent_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    system_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    temperature: Mapped[float] = mapped_column(Float, nullable=False)
+    max_steps: Mapped[int] = mapped_column(Integer, nullable=False)
+    tools: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    config: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    gate_status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    created_by: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, server_default=func.now()
+    )
+
+
+class EvalSuite(Base):
+    """A named, fixed regression set and its pass-rate threshold."""
+
+    __tablename__ = "eval_suites"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    owner_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    case_ids: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    pass_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.95)
+    scorer: Mapped[str] = mapped_column(String(100), nullable=False, default="composite")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    auto_on_save: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    schedule_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )
+
+
+class GatePolicy(Base):
+    """Singleton quality-gate policy; suite thresholds override the default."""
+
+    __tablename__ = "gate_policies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default="default")
+    default_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.95)
+    enforce: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    allow_bypass: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notify_to: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )
+
+
+class GateRun(Base):
+    """Persisted quality decision for one AgentVersion and EvalSuite."""
+
+    __tablename__ = "gate_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    agent_version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agent_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    suite_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("eval_suites.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    eval_run_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("eval_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    baseline_gate_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("gate_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    triggered_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    trigger_source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    pass_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.95)
+    failed_case_ids: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    details: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    diff: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, server_default=func.now(), index=True
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class GateBypass(Base):
+    """Append-only, reasoned administrative exception to a failed gate."""
+
+    __tablename__ = "gate_bypasses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    agent_version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agent_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    gate_run_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("gate_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, server_default=func.now()
+    )
+
+
+# ---------------------------------------------------------------------------
 # JSON-Text auto-serialisation
 # ---------------------------------------------------------------------------
 #
@@ -684,6 +815,15 @@ _JSON_TEXT_FIELDS: tuple[tuple[type, str], ...] = (
     (EvalCase, "tool_calls"),
     (EvalCase, "score_details"),
     (EvalRun, "results"),
+    (EvalRun, "request"),
+    (AgentVersion, "snapshot"),
+    (AgentVersion, "tools"),
+    (AgentVersion, "config"),
+    (EvalSuite, "case_ids"),
+    (GatePolicy, "notify_to"),
+    (GateRun, "failed_case_ids"),
+    (GateRun, "details"),
+    (GateRun, "diff"),
 )
 
 
@@ -743,6 +883,29 @@ for _model_cls, _attr in _JSON_TEXT_FIELDS:
     event.listen(_model_cls, "before_update", _jsonify)
 
 
+@event.listens_for(AgentVersion, "before_update")
+def _protect_agent_version(_mapper: Mapper, _connection: Any, target: AgentVersion) -> None:
+    """Only the mutable gate decision may change after a snapshot is committed."""
+    state = sqlalchemy.inspect(target)
+    protected = (
+        "agent_id", "version_number", "snapshot", "system_prompt", "model",
+        "provider", "temperature", "max_steps", "tools", "config", "created_by", "created_at",
+    )
+    if any(state.attrs[name].history.has_changes() for name in protected):
+        raise ValueError("AgentVersion runtime snapshots are immutable")
+
+
+@event.listens_for(AgentVersion, "before_delete")
+def _prevent_agent_version_delete(_mapper: Mapper, _connection: Any, _target: AgentVersion) -> None:
+    raise ValueError("AgentVersion records cannot be deleted through the ORM")
+
+
+@event.listens_for(GateBypass, "before_update")
+@event.listens_for(GateBypass, "before_delete")
+def _protect_gate_bypass(_mapper: Mapper, _connection: Any, _target: GateBypass) -> None:
+    raise ValueError("GateBypass audit records are append-only")
+
+
 __all__ = [
     "Base",
     # Constants
@@ -780,5 +943,10 @@ __all__ = [
     "Step",
     "EvalCase",
     "EvalRun",
+    "AgentVersion",
+    "EvalSuite",
+    "GatePolicy",
+    "GateRun",
+    "GateBypass",
     "ToolMetadata",
 ]
