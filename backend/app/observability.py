@@ -93,6 +93,12 @@ metrics = RequestMetrics()
 logger = logging.getLogger("agentforge.http")
 
 
+def _safe_log_path(path: str) -> str:
+    if path.startswith("/api/deliver/") and path.endswith("/chat"):
+        return "/api/deliver/[redacted]/chat"
+    return path
+
+
 async def request_context_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id", "").strip()[:64] or uuid.uuid4().hex
     request.state.request_id = request_id
@@ -113,7 +119,7 @@ async def request_context_middleware(request: Request, call_next):
     logger.info(
         "%s %s -> %s (%.2fms)",
         request.method,
-        request.url.path,
+        _safe_log_path(request.url.path),
         response.status_code,
         duration,
         extra={"request_id": request_id},

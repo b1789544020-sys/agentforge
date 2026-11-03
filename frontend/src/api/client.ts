@@ -411,6 +411,78 @@ export const QualityGates = {
     }).then((r) => r.data),
 };
 
+export interface Deployment {
+  id: string;
+  agent_id: string;
+  agent_version_id: string;
+  name: string;
+  status: "active" | "stopped";
+  token_revoked: boolean;
+  token_prefix: string;
+  version_history: string[];
+  token?: string;
+  api_url?: string;
+  page_url?: string;
+  embed_url?: string;
+}
+
+export interface AgentTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  category: string;
+  version_number: number;
+  builtin: boolean;
+}
+
+export const Deliveries = {
+  list: () => api.get<Deployment[]>("/deployments").then((r) => r.data),
+  publish: (agentVersionId: string, name: string) =>
+    api.post<Deployment>("/deployments", { agent_version_id: agentVersionId, name }).then((r) => r.data),
+  action: (id: string, action: "start" | "stop" | "rollback" | "revoke") =>
+    api.post<Deployment>(`/deployments/${id}/${action}`).then((r) => r.data),
+  rotate: (id: string) => api.post<Deployment>(`/deployments/${id}/rotate-token`).then((r) => r.data),
+};
+
+export const Templates = {
+  list: () => api.get<AgentTemplate[]>("/templates").then((r) => r.data),
+  instantiate: (id: string) => api.post<{ agent: Agent }>(`/templates/${id}/instantiate`, {}).then((r) => r.data),
+};
+
+export interface KnowledgeBase {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+export interface KnowledgeDocument {
+  id: string;
+  filename: string;
+  status: "processing" | "ready" | "failed";
+  error?: string | null;
+  chunks: number;
+}
+
+export interface KnowledgeHit {
+  content: string;
+  document: string;
+  section?: string | null;
+  score: number;
+}
+
+export const Knowledge = {
+  list: () => api.get<KnowledgeBase[]>("/knowledge-bases").then((r) => r.data),
+  create: (name: string) => api.post<KnowledgeBase>("/knowledge-bases", { name }).then((r) => r.data),
+  documents: (id: string) => api.get<KnowledgeDocument[]>(`/knowledge-bases/${id}/documents`).then((r) => r.data),
+  upload: (id: string, file: File) => {
+    const data = new FormData(); data.append("file", file);
+    return api.post<KnowledgeDocument>(`/knowledge-bases/${id}/documents`, data).then((r) => r.data);
+  },
+  bind: (agentId: string, kbId: string) => api.put(`/agents/${agentId}/knowledge/${kbId}`),
+  search: (kbId: string, agentId: string, q: string) =>
+    api.get<KnowledgeHit[]>(`/knowledge-bases/${kbId}/search`, { params: { agent_id: agentId, q } }).then((r) => r.data),
+};
+
 export interface MetricSummary {
   requests: number;
   success: number;

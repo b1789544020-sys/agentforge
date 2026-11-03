@@ -939,6 +939,109 @@ class AlertEvent(Base):
     acknowledged_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class Deployment(Base):
+    __tablename__ = "deployments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    agent_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    agent_version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agent_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    token_prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    token_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    runtime_spec: Mapped[str] = mapped_column(Text, nullable=False)
+    version_history: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    published_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
+class AgentTemplate(Base):
+    __tablename__ = "agent_templates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    owner_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    category: Mapped[str] = mapped_column(String(100), nullable=False, default="general")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
+class AgentTemplateVersion(Base):
+    __tablename__ = "agent_template_versions"
+    __table_args__ = (UniqueConstraint("template_id", "version_number", name="uq_agent_template_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    template_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agent_templates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
+class KnowledgeBase(Base):
+    __tablename__ = "knowledge_bases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    owner_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
+class KnowledgeDocument(Base):
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    kb_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ready")
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    document_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kb_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    section: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    embedding: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
+class KnowledgeBinding(Base):
+    __tablename__ = "knowledge_bindings"
+    __table_args__ = (UniqueConstraint("agent_id", "kb_id", name="uq_agent_knowledge_binding"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    agent_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kb_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
 # ---------------------------------------------------------------------------
 # JSON-Text auto-serialisation
 # ---------------------------------------------------------------------------
@@ -980,6 +1083,9 @@ _JSON_TEXT_FIELDS: tuple[tuple[type, str], ...] = (
     (ApprovalRequest, "payload"),
     (Feedback, "context_snapshot"),
     (AlertEvent, "detail"),
+    (Deployment, "runtime_spec"),
+    (Deployment, "version_history"),
+    (AgentTemplateVersion, "snapshot"),
 )
 
 
@@ -1109,6 +1215,13 @@ __all__ = [
     "Feedback",
     "AlertRule",
     "AlertEvent",
+    "Deployment",
+    "AgentTemplate",
+    "AgentTemplateVersion",
+    "KnowledgeBase",
+    "KnowledgeDocument",
+    "KnowledgeChunk",
+    "KnowledgeBinding",
     "Memory",
     "Run",
     "Step",

@@ -8,9 +8,11 @@ import QualityGatePanel from "./pages/QualityGates";
 import LanguageToggle from "./components/LanguageToggle";
 import TeamManagement from "./pages/TeamManagement";
 import OperationsPage from "./pages/Operations";
+import DeliveryCenter from "./pages/DeliveryCenter";
+import KnowledgePage from "./pages/Knowledge";
 import { Auth, type User } from "./api/client";
 
-type Tab = "config" | "run" | "eval" | "prompts" | "gates" | "teams" | "operations";
+type Tab = "config" | "run" | "eval" | "prompts" | "gates" | "teams" | "operations" | "delivery" | "knowledge";
 
 export default function App() {
   const { t } = useTranslation();
@@ -27,6 +29,8 @@ export default function App() {
     { id: "gates", label: "质量门禁" },
     { id: "teams", label: "团队与审计" },
     { id: "operations", label: "运营与成本" },
+    { id: "delivery", label: "交付与模板" },
+    { id: "knowledge", label: "知识库" },
   ];
 
   return (
@@ -61,6 +65,8 @@ export default function App() {
         {tab === "gates" && <QualityGatePanel />}
         {tab === "teams" && <TeamManagement permissions={user?.permissions || []} />}
         {tab === "operations" && <OperationsPage permissions={user?.permissions || []} />}
+        {tab === "delivery" && <DeliveryCenter />}
+        {tab === "knowledge" && <KnowledgePage />}
       </main>
     </div>
   );

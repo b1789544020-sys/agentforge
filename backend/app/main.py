@@ -16,11 +16,14 @@ from app.api.agents import (
     tools_router,
 )
 from app.api.evals import router as evals_router
+from app.api.deployments import public_router as delivery_public_router, router as deployments_router
 from app.api.gates import router as gates_router
+from app.api.knowledge import router as knowledge_router
 from app.api.operations import router as operations_router
 from app.api.prompts import router as prompts_router
 from app.api.runs import router as runs_router
 from app.api.teams import router as teams_router
+from app.api.templates import router as templates_router
 from app.api.tools_metadata import router as tools_metadata_router
 from app.api.users import router as users_router
 from app.api.ws import router as ws_router
@@ -127,6 +130,9 @@ def create_app() -> FastAPI:
         (gates_router, "quality-gates"),
         (teams_router, "teams"),
         (operations_router, "operations"),
+        (deployments_router, "deployments"),
+        (templates_router, "templates"),
+        (knowledge_router, "knowledge"),
         (memory_router, "memory"),
         (tools_router, "tools"),
         (tools_metadata_router, "tools"),
@@ -139,6 +145,8 @@ def create_app() -> FastAPI:
             )
     for prefix in (settings.api_prefix, "/api"):
         app.include_router(users_router, prefix=prefix, tags=["auth"])
+    # Public delivery uses a deployment-specific token, never a user JWT.
+    app.include_router(delivery_public_router)
     # WebSocket authentication is performed in the handler because browsers
     # use a subprotocol credential rather than an arbitrary HTTP header.
     app.include_router(ws_router, prefix=settings.api_prefix, tags=["ws"])

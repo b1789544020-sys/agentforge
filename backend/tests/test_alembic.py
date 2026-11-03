@@ -99,6 +99,13 @@ def test_alembic_upgrade_creates_all_tables(sqlite_file: Path) -> None:
         "feedback",
         "alert_rules",
         "alert_events",
+        "deployments",
+        "agent_templates",
+        "agent_template_versions",
+        "knowledge_bases",
+        "knowledge_documents",
+        "knowledge_chunks",
+        "knowledge_bindings",
         "alembic_version",
     }
     assert expected.issubset(tables), (
@@ -152,6 +159,13 @@ def test_alembic_downgrade_drops_everything(sqlite_file: Path) -> None:
         "feedback",
         "alert_rules",
         "alert_events",
+        "deployments",
+        "agent_templates",
+        "agent_template_versions",
+        "knowledge_bases",
+        "knowledge_documents",
+        "knowledge_chunks",
+        "knowledge_bindings",
     }
     assert model_tables.isdisjoint(tables), (
         f"still present: {model_tables & tables}"

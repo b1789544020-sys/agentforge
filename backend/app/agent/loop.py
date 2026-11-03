@@ -1188,6 +1188,11 @@ class AgentLoop:
         system_prompt = await resolve_system_prompt(self.session, self.agent, user_input)
         if system_prompt:
             ctx.add("system", system_prompt)
+        from app.knowledge import knowledge_context
+        kb_ids = self._agent_config.get("knowledge_base_ids") if "knowledge_base_ids" in self._agent_config else None
+        retrieved = await knowledge_context(self.session, self.agent.id, user_input, kb_ids=kb_ids)
+        if retrieved:
+            ctx.add("system", retrieved)
         ctx.add("user", user_input)
         return ctx
 
