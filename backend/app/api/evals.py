@@ -40,6 +40,7 @@ from app.api.schemas import (
     EvalUploadResponse,
 )
 from app.database import get_session
+from app.eval import control as eval_control
 from app.eval.metrics import Metrics
 from app.eval.runner import EvalRunner
 from app.eval.scorer import EvalScorer
@@ -85,6 +86,7 @@ def _serialize_run(run: EvalRun, cases: list[EvalCase] | None = None) -> dict[st
         # back to whatever the runner persisted (default: ``"composite"``).
         "scorer": run.scorer or "composite",
         "pass_threshold": float(run.pass_threshold or 0.0),
+        "priority": run.priority,
         "total": run.total,
         "passed": run.passed,
         "failed": run.failed,
@@ -202,6 +204,7 @@ async def create_eval(
         # back without consulting the registry at request time.
         scorer=(payload.scorer_name or payload.scorer) or "composite",
         pass_threshold=float(payload.pass_threshold),
+        priority=payload.priority,
         total=total,
         passed=0,
         failed=0,
@@ -211,9 +214,10 @@ async def create_eval(
     session.add(placeholder)
     await session.commit()
     await session.refresh(placeholder)
+    cancel_event = eval_control.register(eval_run_id)
 
     # ---- schedule the actual work in the background -----------------------
-    async def _run() -> None:
+    async def _execute_eval() -> None:
         from app.database import async_session_factory
 
         async with async_session_factory() as inner:
@@ -239,6 +243,8 @@ async def create_eval(
                 # 0.1.2 5.1 轮: 并发 case 各用独立 session,
                 # 共享 bookkeeping session 会因多 loop 抢连接死锁.
                 session_factory=async_session_factory,
+                cancel_event=cancel_event,
+                priority=payload.priority,
             )
             if has_dataset:
                 await runner.run_eval(
@@ -255,6 +261,12 @@ async def create_eval(
                     eval_run_id=eval_run_id,
                 )
 
+    async def _run() -> None:
+        try:
+            await _execute_eval()
+        finally:
+            eval_control.unregister(eval_run_id)
+
     background.add_task(_run)
     return _serialize_run(placeholder, [])
 
@@ -262,6 +274,29 @@ async def create_eval(
 # ---------------------------------------------------------------------------
 # Detail + progress
 # ---------------------------------------------------------------------------
+@router.post("/{eval_id}/cancel", response_model=EvalRunOut)
+async def cancel_eval(
+    agent_id: str,
+    eval_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Cancel only this evaluation, leaving ordinary Agent runs untouched."""
+    from datetime import datetime
+
+    run = await session.get(EvalRun, eval_id)
+    if not run or run.agent_id != agent_id:
+        raise HTTPException(status_code=404, detail="eval run not found")
+    if run.status in {"completed", "failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail=f"cannot cancel eval in status {run.status!r}")
+    signalled = eval_control.request_cancel(eval_id)
+    run.status = "cancelling" if signalled else "cancelled"
+    if not signalled:
+        run.finished_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(run)
+    return _serialize_run(run, [])
+
+
 @router.get("/{eval_id}", response_model=EvalRunOut)
 async def get_eval(
     agent_id: str,
@@ -355,6 +390,7 @@ async def upload_eval_dataset(
     scorer_name: str | None = Form(None),
     pass_threshold: float = Form(0.7),
     max_concurrency: int = Form(4),
+    priority: int = Form(0),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Upload a ``.jsonl`` or ``.csv`` dataset and run the agent over it."""
@@ -417,6 +453,7 @@ async def upload_eval_dataset(
         dataset=dataset_name,
         scorer=scorer_name or "composite",
         pass_threshold=float(pass_threshold),
+        priority=priority,
         total=len(cases),
         passed=0,
         failed=0,
@@ -426,6 +463,7 @@ async def upload_eval_dataset(
     session.add(placeholder)
     await session.commit()
     await session.refresh(placeholder)
+    cancel_event = eval_control.register(eval_run_id)
 
     payloads = [c.to_runner_payload() for c in cases]
     parsed_format = fmt
@@ -436,6 +474,7 @@ async def upload_eval_dataset(
         async with async_session_factory() as inner:
             inner_agent = await inner.get(Agent, agent_id)
             if inner_agent is None:
+                eval_control.unregister(eval_run_id)
                 return
             runner = _Runner(
                 inner,
@@ -444,6 +483,8 @@ async def upload_eval_dataset(
                 pass_threshold=float(pass_threshold),
                 max_concurrency=max_concurrency,
                 session_factory=async_session_factory,
+                cancel_event=cancel_event,
+                priority=priority,
             )
             try:
                 await runner.run(
@@ -466,6 +507,7 @@ async def upload_eval_dataset(
                         await inner.commit()
                 except Exception:  # noqa: BLE001
                     pass
+        eval_control.unregister(eval_run_id)
 
     background.add_task(_run)
 

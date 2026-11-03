@@ -83,7 +83,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     anthropic_default_model: str = "claude-3-5-sonnet-20241022"
 
-    llm_provider: Literal["mock", "openai", "anthropic", "deepseek", "qwen"] = "mock"
+    llm_provider: Literal[
+        "mock", "openai", "anthropic", "deepseek", "qwen", "kimi", "glm", "doubao"
+    ] = "mock"
+    kimi_api_key: str | None = None
+    glm_api_key: str | None = None
+    doubao_api_key: str | None = None
     request_timeout_seconds: int = 120
     max_retries: int = 3
 
@@ -119,6 +124,12 @@ class Settings(BaseSettings):
     vector_backend: str = "inprocess"  # "inprocess" | "chroma"
     embedding_dim: int = 128
     embedding_max_tokens: int = 512  # truncate long inputs to keep vectors bounded
+    embedding_provider: Literal["hashing", "sentence_transformers"] = "hashing"
+    embedding_model: str = "BAAI/bge-small-zh-v1.5"
+    embedding_local_files_only: bool = True
+    vector_url: str = "http://localhost:6333"
+    vector_collection: str = "agentforge_memories"
+    vector_api_key: str | None = None
 
     # ---- API / tool security -----------------------------------------
     # Empty keeps the local single-user demo frictionless.  Setting this

@@ -81,6 +81,7 @@
     "col_expected": "Expected",
     "start": "Start Evaluation",
     "running": "Running…",
+    "cancel": "Cancel",
     "past": "Past Evaluations",
     "empty": "No evaluations yet.",
     "col_dataset": "Dataset",

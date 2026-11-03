@@ -90,9 +90,11 @@ def test_alembic_upgrade_creates_all_tables(sqlite_file: Path) -> None:
     cn = sqlite3.connect(str(sqlite_file))
     try:
         run_columns = {row[1] for row in cn.execute("PRAGMA table_info(agent_runs)")}
+        eval_columns = {row[1] for row in cn.execute("PRAGMA table_info(eval_runs)")}
     finally:
         cn.close()
     assert "config" in run_columns
+    assert "priority" in eval_columns
 
 
 def test_alembic_downgrade_drops_everything(sqlite_file: Path) -> None:

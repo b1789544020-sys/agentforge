@@ -15,6 +15,7 @@ model exists; passing ``content`` is enough.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import uuid
@@ -37,6 +38,7 @@ from app.memory.embeddings import (
 logger = logging.getLogger(__name__)
 
 Mode = Literal["exact", "embed", "hybrid"]
+_INDEX_REBUILD_LOCK = asyncio.Lock()
 
 
 def _not_expired_clause():
@@ -311,6 +313,24 @@ class MemoryStore:
         from app.memory.vector_store import get_vector_store
 
         store = get_vector_store()
+        if not getattr(store, "persistent", False) and not getattr(store, "_sql_index_ready", False):
+            async with _INDEX_REBUILD_LOCK:
+                if not getattr(store, "_sql_index_ready", False):
+                    rows = (
+                        await self.session.execute(
+                            select(Memory.id, Memory.embedding).where(Memory.embedding.isnot(None))
+                        )
+                    ).all()
+                    ids: list[str] = []
+                    vectors: list[list[float]] = []
+                    for id_, blob in rows:
+                        vector = _unpack_vector(blob)
+                        if vector:
+                            ids.append(id_)
+                            vectors.append(vector)
+                    if ids:
+                        store.upsert(ids, vectors)
+                    store._sql_index_ready = True
         # Over-fetch a little so we can re-rank by importance and
         # importance-tie-break still leaves us with ``limit`` rows.
         over_fetch = max(limit * 2, 10)

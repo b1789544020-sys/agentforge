@@ -28,19 +28,27 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from typing import Iterable, List, Protocol, runtime_checkable
+from typing import Any, Iterable, List, Protocol, runtime_checkable
 
-# Pre-compiled tokeniser: lowercase, word chars only.  This intentionally
-# ignores CJK characters; AgentForge is ASCII-first in 0.1.x and real
-# multilingual support will be added when a real embedder lands.
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+# ASCII words plus CJK sequences.  CJK sequences are expanded into
+# unigrams and bigrams below so the dependency-free fallback never turns
+# Chinese-only text into a zero vector.
+_TOKEN_RE = re.compile(r"[a-z0-9]+|[\u3400-\u4dbf\u4e00-\u9fff]+")
+_CJK_RE = re.compile(r"^[\u3400-\u4dbf\u4e00-\u9fff]+$")
 
 
 def _tokens(text: str, max_tokens: int = 512) -> list[str]:
     """Tokenise ``text`` and truncate to ``max_tokens`` tokens."""
     if not text:
         return []
-    return _TOKEN_RE.findall(text.lower())[:max_tokens]
+    tokens: list[str] = []
+    for token in _TOKEN_RE.findall(text.lower()):
+        if _CJK_RE.match(token):
+            tokens.extend(token)
+            tokens.extend(token[index : index + 2] for index in range(len(token) - 1))
+        else:
+            tokens.append(token)
+    return tokens[:max_tokens]
 
 
 @runtime_checkable
@@ -122,27 +130,66 @@ def unpack_vector(blob: bytes | None) -> list[float]:
     return list(struct.unpack(f"<{n}f", blob))
 
 
+class SentenceTransformerEmbedder:
+    """Lazy adapter for a real local multilingual sentence embedding model."""
+
+    def __init__(self, model_name: str, *, local_files_only: bool = True) -> None:
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as exc:  # pragma: no cover - optional extra
+            raise RuntimeError(
+                "sentence-transformers is required for "
+                "AGENTFORGE_EMBEDDING_PROVIDER=sentence_transformers"
+            ) from exc
+        self._model = SentenceTransformer(model_name, local_files_only=local_files_only)
+        self.dim = int(self._model.get_sentence_embedding_dimension())
+
+    def __call__(self, text: str) -> list[float]:
+        if not text:
+            return [0.0] * self.dim
+        values = self._model.encode(text, normalize_embeddings=True)
+        vector = [float(value) for value in (values.tolist() if hasattr(values, "tolist") else values)]
+        if len(vector) != self.dim or not all(math.isfinite(value) for value in vector):
+            raise RuntimeError("sentence-transformers returned an invalid embedding")
+        return vector
+
+
 # ---- Module-level helpers used by MemoryStore -----------------------------
 
 
-_default_embedder: HashingEmbedder | None = None
+_default_embedder: Embedder | None = None
+_default_embedder_signature: tuple[Any, ...] | None = None
 
 
-def get_default_embedder(dim: int = 128) -> HashingEmbedder:
-    """Lazy module-level singleton so callers do not pay construction cost
-    on every call.  Tests can call :func:`_reset_default_embedder` to
-    force a rebuild when the dim changes.
-    """
-    global _default_embedder
-    if _default_embedder is None or _default_embedder.dim != dim:
-        _default_embedder = HashingEmbedder(dim=dim)
+def get_default_embedder(dim: int = 128) -> Embedder:
+    """Return the configured embedder, constructing heavy models only once."""
+    global _default_embedder, _default_embedder_signature
+    from app.config import get_settings
+
+    settings = get_settings()
+    provider = settings.embedding_provider
+    signature: tuple[Any, ...] = (
+        provider,
+        dim if provider == "hashing" else settings.embedding_model,
+        settings.embedding_local_files_only,
+    )
+    if _default_embedder is None or signature != _default_embedder_signature:
+        if provider == "sentence_transformers":
+            _default_embedder = SentenceTransformerEmbedder(
+                settings.embedding_model,
+                local_files_only=settings.embedding_local_files_only,
+            )
+        else:
+            _default_embedder = HashingEmbedder(dim=dim)
+        _default_embedder_signature = signature
     return _default_embedder
 
 
 def _reset_default_embedder() -> None:
-    """Test hook -- drop the cached embedder so a new dim is picked up."""
-    global _default_embedder
+    """Test hook -- drop the cached embedder so a new config is picked up."""
+    global _default_embedder, _default_embedder_signature
     _default_embedder = None
+    _default_embedder_signature = None
 
 
 def encode(
@@ -155,10 +202,11 @@ def encode(
 
     Convenience for callers that do not want to manage a singleton.
     """
+    embedder = get_default_embedder(dim=dim)
     tokens = _tokens(text, max_tokens=max_tokens)
     if not tokens:
-        return [0.0] * dim
-    return get_default_embedder(dim=dim)(text)
+        return [0.0] * embedder.dim
+    return embedder(text)
 
 
 def decode(blob: bytes | None) -> list[float]:
@@ -171,6 +219,7 @@ def decode(blob: bytes | None) -> list[float]:
 __all__ = [
     "Embedder",
     "HashingEmbedder",
+    "SentenceTransformerEmbedder",
     "encode",
     "decode",
     "pack_vector",

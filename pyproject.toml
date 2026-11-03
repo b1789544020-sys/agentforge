@@ -78,10 +78,12 @@ dev = [
     "ruff==0.8.4",
     "mypy==1.13.0",
 ]
-# Optional vector backends.  Default install is hashing-trick in-process.
+# Real local semantic embeddings; hashing remains the lightweight default.
+embedding = [
+    "sentence-transformers==3.3.1",
+]
 vector = [
-    # "chromadb>=0.5",   # uncomment when ChromaDB is the chosen backend
-    # "pgvector>=0.3",    # uncomment for PostgreSQL pgvector backend
+    "qdrant-client==1.12.1",
 ]
 
 [project.scripts]

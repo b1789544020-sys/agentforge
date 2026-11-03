@@ -58,6 +58,8 @@ class VectorStore(Protocol):
     ) -> list[VectorHit]: ...
 
 class InMemoryVectorStore:
+    persistent = False
+
     """Lock-protected dict-of-vectors backend.
 
     The lock guards a single ``_index: dict[str, tuple[float, ...]]``.
@@ -115,7 +117,7 @@ class InMemoryVectorStore:
         with self._lock:
             scored: list[VectorHit] = []
             for id_, vec in self._index.items():
-                if not vec:
+                if not vec or len(vec) != len(q):
                     continue
                 norm = math.sqrt(sum(x * x for x in vec))
                 if norm == 0:
@@ -126,6 +128,85 @@ class InMemoryVectorStore:
                     scored.append(VectorHit(id=id_, score=float(score)))
         scored.sort(key=lambda h: h.score, reverse=True)
         return scored[:k]
+
+
+class QdrantVectorStore:
+    """Persistent Qdrant implementation of the vector-store contract."""
+
+    persistent = True
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        collection: str,
+        dim: int,
+        api_key: str | None = None,
+        client: object | None = None,
+    ) -> None:
+        if client is None:
+            from qdrant_client import QdrantClient
+
+            client = QdrantClient(url=url, api_key=api_key)
+        self._client = client
+        self.collection = collection
+        self.dim = dim
+
+    def _ensure_collection(self) -> None:
+        if self._client.collection_exists(self.collection):  # type: ignore[attr-defined]
+            return
+        from qdrant_client.http import models
+
+        self._client.create_collection(  # type: ignore[attr-defined]
+            collection_name=self.collection,
+            vectors_config=models.VectorParams(size=self.dim, distance=models.Distance.COSINE),
+        )
+
+    def upsert(self, ids: Sequence[str], vectors: Sequence[Sequence[float]]) -> None:
+        if len(ids) != len(vectors):
+            raise ValueError("ids and vectors length mismatch")
+        if not ids:
+            return
+        from qdrant_client.http import models
+
+        self._ensure_collection()
+        points = []
+        for id_, vector in zip(ids, vectors):
+            if not vector:
+                self.delete([id_])
+                continue
+            if len(vector) != self.dim:
+                raise ValueError(f"expected {self.dim}-dim vectors, got {len(vector)}")
+            points.append(models.PointStruct(id=id_, vector=list(vector)))
+        if points:
+            self._client.upsert(  # type: ignore[attr-defined]
+                collection_name=self.collection, points=points, wait=True
+            )
+
+    def delete(self, ids: Sequence[str]) -> None:
+        if not ids:
+            return
+        from qdrant_client.http import models
+
+        self._client.delete(  # type: ignore[attr-defined]
+            collection_name=self.collection,
+            points_selector=models.PointIdsList(points=list(ids)),
+            wait=True,
+        )
+
+    def search(self, vector: Sequence[float], *, k: int = 5) -> list[VectorHit]:
+        if not vector or not any(vector):
+            return []
+        if len(vector) != self.dim:
+            return []
+        self._ensure_collection()
+        response = self._client.query_points(  # type: ignore[attr-defined]
+            collection_name=self.collection,
+            query=list(vector),
+            limit=k,
+            with_payload=False,
+        )
+        return [VectorHit(id=str(point.id), score=float(point.score)) for point in response.points]
 
 
 _lock = threading.Lock()
@@ -147,15 +228,18 @@ def get_vector_store() -> VectorStore:
             backend = settings.vector_backend
             if backend == "inprocess":
                 _default_store = InMemoryVectorStore()
-            elif backend == "chroma":  # pragma: no cover
-                raise NotImplementedError(
-                    "AGENTFORGE_VECTOR_BACKEND=chroma is not wired up in 0.1.2; "
-                    "use 'inprocess' or implement the ChromaDB client."
+            elif backend == "qdrant":
+                from app.memory.embeddings import get_default_embedder
+
+                _default_store = QdrantVectorStore(
+                    url=settings.vector_url,
+                    collection=settings.vector_collection,
+                    dim=get_default_embedder(settings.embedding_dim).dim,
+                    api_key=settings.vector_api_key,
                 )
             else:
                 raise ValueError(
-                    f"Unknown vector backend: {backend!r} "
-                    "(expected 'inprocess' or 'chroma')"
+                    f"Unknown vector backend: {backend!r} (expected 'inprocess' or 'qdrant')"
                 )
         return _default_store
 
@@ -170,6 +254,7 @@ def _reset_default_store() -> None:
 __all__ = [
     "VectorStore",
     "InMemoryVectorStore",
+    "QdrantVectorStore",
     "VectorHit",
     "get_vector_store",
     "_reset_default_store",

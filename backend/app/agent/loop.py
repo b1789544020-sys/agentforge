@@ -693,6 +693,8 @@ class AgentLoop:
         # Avoids accidentally shipping a "placeholder" bearer that would 401.
         if provider == "anthropic":
             api_key = self.settings.anthropic_api_key
+        elif provider in {"kimi", "glm", "doubao"}:
+            api_key = getattr(self.settings, f"{provider}_api_key")
         else:
             api_key = self.settings.openai_api_key
         if not api_key:
@@ -710,7 +712,7 @@ class AgentLoop:
             "timeout": float(self.settings.request_timeout_seconds),
             "max_retries": self.settings.max_retries,
         }
-        if provider not in {"openai", "deepseek", "qwen", "anthropic"}:
+        if provider not in {"openai", "deepseek", "qwen", "anthropic", "kimi", "glm", "doubao"}:
             # Unknown / custom → use the configured endpoint (which is
             # OpenAI-format by default, so this is a no-op for custom
             # OpenAI-compatible services).
@@ -836,6 +838,8 @@ class AgentLoop:
                     )
                     raise
 
+                if self._cancelled.is_set():
+                    raise AgentCancelledError("run cancelled")
                 response: LLMResponse = outcome["response"]
                 total_prompt += response.prompt_tokens
                 total_completion += response.completion_tokens

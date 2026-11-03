@@ -10,7 +10,7 @@ name: agentforge
 #      frontend   → http://localhost:5173  (React dev server)
 #      api        → http://localhost:8000  (FastAPI)
 #      api/docs   → http://localhost:8000/docs  (Swagger UI)
-#      chromadb   → http://localhost:8001  (REST API, no UI)
+#      qdrant     → http://localhost:6333  (REST API + dashboard)
 #
 #  Notes
 #  ─────
@@ -20,8 +20,8 @@ name: agentforge
 #    throwaway container.  This is the safest default on Linux/macOS
 #    hosts.  On Windows / Docker Desktop, mount the socket only if you
 #    understand the security implications.
-#  * If you don't need vector memory, comment out the `chromadb`
-#    service and set `AGENTFORGE_VECTOR_BACKEND=none` in the api env.
+#  * If you don't need persistent vector memory, remove the `qdrant`
+#    dependency/service and set `AGENTFORGE_VECTOR_BACKEND=inprocess`.
 #  * Secrets (OpenAI / Anthropic keys) are read from your shell env at
 #    compose-time.  They are never baked into the image.
 # ──────────────────────────────────────────────────────────────
@@ -40,8 +40,10 @@ x-common-env: &common-env
   AGENTFORGE_MAX_STEPS: ${AGENTFORGE_MAX_STEPS:-10}
   AGENTFORGE_MAX_TOKENS: ${AGENTFORGE_MAX_TOKENS:-8000}
   # Vector memory
-  AGENTFORGE_VECTOR_BACKEND: ${AGENTFORGE_VECTOR_BACKEND:-inprocess}
-  AGENTFORGE_VECTOR_URL: http://chromadb:8000
+  AGENTFORGE_VECTOR_BACKEND: ${AGENTFORGE_VECTOR_BACKEND:-qdrant}
+  AGENTFORGE_VECTOR_URL: http://qdrant:6333
+  AGENTFORGE_EMBEDDING_PROVIDER: ${AGENTFORGE_EMBEDDING_PROVIDER:-hashing}
+  AGENTFORGE_EMBEDDING_MODEL: ${AGENTFORGE_EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
   # Sandbox
   AGENTFORGE_SANDBOX_MODE: ${AGENTFORGE_SANDBOX_MODE:-docker}
   AGENTFORGE_SANDBOX_IMAGE: ${AGENTFORGE_SANDBOX_IMAGE:-agentforge-sandbox}
@@ -65,7 +67,7 @@ services:
     environment:
       <<: *common-env
     volumes:
-      # Persist the SQLite DB + uploaded files across restarts.
+      # Persist uploaded files across restarts (PostgreSQL has its own volume).
       - ./data:/app/data
       # Allow the api to spawn sibling sandbox containers via the host
       # docker socket.  Comment out the next line for a "no docker
@@ -85,8 +87,8 @@ services:
         condition: service_healthy
       agentforge-sandbox:
         condition: service_started
-      chromadb:
-        condition: service_healthy
+      qdrant:
+        condition: service_started
     networks:
       - agentforge-net
 
@@ -173,37 +175,23 @@ services:
     networks:
       - agentforge-net
 
-  # ─── 5. ChromaDB (optional vector memory) ───────────────────
-  chromadb:
-    image: chromadb/chroma:0.5.20
-    container_name: agentforge-chromadb
+  # ─── 5. Qdrant (persistent vector memory) ───────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: agentforge-qdrant
     restart: unless-stopped
-    environment:
-      # Persist the local `chroma/` volume; reset with `docker compose
-      # down -v` when you want a clean slate.
-      ANONYMIZED_TELEMETRY: "False"
-      ALLOW_RESET: "True"
-      IS_PERSISTENT: "True"
-      PERSIST_DIRECTORY: /chroma/chroma
     volumes:
-      - chroma-data:/chroma/chroma
+      - qdrant-data:/qdrant/storage
     ports:
-      - "8001:8000"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; \
-        sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat', timeout=2).status==200 else 1)"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      - "6333:6333"
     networks:
       - agentforge-net
 
 volumes:
   postgres-data:
     name: agentforge-postgres-data
-  chroma-data:
-    name: agentforge-chroma-data
+  qdrant-data:
+    name: agentforge-qdrant-data
 
 networks:
   agentforge-net:

@@ -63,7 +63,7 @@ export default function Evaluation() {
       for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 1500));
         const fresh = await Evals.get(agentId, ev.id);
-        if (fresh.status === "completed" || fresh.status === "failed") {
+        if (["completed", "failed", "cancelled"].includes(fresh.status)) {
           setEvals((es) => es.map((e) => (e.id === ev.id ? fresh : e)));
           break;
         }
@@ -72,6 +72,16 @@ export default function Evaluation() {
       setError(e instanceof Error ? e.message : t("eval.eval_failed"));
     } finally {
       setRunning(false);
+    }
+  };
+
+  const onCancel = async (evalId: string) => {
+    if (!agentId) return;
+    try {
+      const updated = await Evals.cancel(agentId, evalId);
+      setEvals((items) => items.map((item) => item.id === evalId ? updated : item));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t("eval.eval_failed"));
     }
   };
 
@@ -189,6 +199,7 @@ export default function Evaluation() {
                 <th>{t("eval.col_status")}</th>
                 <th>{t("eval.col_pass_rate")}</th>
                 <th>{t("eval.col_started")}</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -209,6 +220,13 @@ export default function Evaluation() {
                     })}
                   </td>
                   <td className="muted">{new Date(e.started_at).toLocaleString()}</td>
+                  <td>
+                    {["pending", "running", "cancelling"].includes(e.status) && (
+                      <button className="secondary" onClick={() => onCancel(e.id)} disabled={e.status === "cancelling"}>
+                        {t("eval.cancel")}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

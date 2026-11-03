@@ -121,7 +121,7 @@ agentforge/
 | Agent 循环 | 自研 ReAct loop + step 持久化 + pause/resume/cancel |
 | 工具 | 10 个内置（`python_eval` 含 `simple` / `math` / `sandbox` 三种安全模式）+ DB 可编辑的元数据层（`tool_metadata` 表 + `/api/tools/{name}/metadata`）+ 插件式注册器（`@tool()`） |
 | 评测 | custom runner + scorer + 4 个 scorer（`composite` / `status` / `tool` / `answer`）+ multipart 数据集上传（`.jsonl` / `.csv`）+ 前端热图组件（`EvalHeatmap`） |
-| 记忆 | SQLite + 进程内 cosine similarity（占位字段：`AGENTFORGE_VECTOR_BACKEND`） |
+| 记忆 | SQL 持久化 + 进程内或 Qdrant cosine similarity；hashing / 本地 sentence-transformers 中文向量 |
 | 沙箱 | 本地子进程（default）或 Docker 容器 |
 | 前端 | React 18 + Vite + TypeScript + Zustand + React Router |
 | 打包 | Docker compose v2（一键起 API + 前端） |
@@ -130,8 +130,8 @@ agentforge/
 > **遗留问题 · Current limitations**
 >
 > * 默认运行在 **SQLite**（schema 与 PostgreSQL 友好，换 driver 即可迁移）。
-> * 记忆检索默认是 **进程内余弦** + hashing-trick 嵌入（`app/memory/embeddings.py`）。`AGENTFORGE_VECTOR_BACKEND=chroma` 已经接入配置开关（`app/memory/vector_store.py`），但 ChromaDB 客户端本身仍是占位（抛 `NotImplementedError`），等真实部署时再装 `chromadb` 包并替换 `chroma` 分支。`AGENTFORGE_VECTOR_URL` 同样已读取但尚未使用。
-> * 只走 5 个 LLM provider：`mock` / `openai` / `anthropic`（专用 `AnthropicClient`，httpx 直调 `/v1/messages`）/ `deepseek` / `qwen`（后两个走 OpenAI 兼容）。其他 OpenAI-format 接口可通过 `AGENTFORGE_OPENAI_BASE_URL` 接入。
+> * 本地默认是 **进程内余弦** + 支持中文 unigram/bigram 的 hashing fallback；生产可选 `AGENTFORGE_VECTOR_BACKEND=qdrant`。真实语义向量可安装 `backend/requirements-embedding.txt`，准备本地 `BAAI/bge-small-zh-v1.5` 后设置 `AGENTFORGE_EMBEDDING_PROVIDER=sentence_transformers`。
+> * Provider 支持 `mock` / `openai` / `anthropic` / `deepseek` / `qwen` / `kimi` / `glm` / `doubao`；后七类中的兼容接口复用统一 OpenAI 协议。真实连通仍需各厂商有效 API key。
 > * 测试套件里 `tests/test_memory_vector.py::TestVectorStoreProtocol::test_unknown_backend_raises` 失败：测试假设环境变量是 `VECTOR_BACKEND`，但 `app/config.py` 的 `Settings` 用的是 `env_prefix="AGENTFORGE_"`。**已在 0.1.3 修**（见 `CHANGELOG.md` Unreleased / Fixed）。
 
 ---
@@ -148,7 +148,7 @@ agentforge/
    ```bash
    docker compose up --build
    ```
-   默认启动 API、前端、PostgreSQL、沙箱模板和可选 ChromaDB 服务。当前环境若未安装 Docker，请先完成本地开发验证，不要把配置检查当作容器验收。
+   默认启动 API、前端、PostgreSQL、Qdrant 和沙箱模板。当前环境若未安装 Docker，请先完成本地开发验证，不要把配置检查当作容器验收。
 3. 打开浏览器：
    - 前端：http://localhost:5173
    - API 文档：http://localhost:8000/docs
@@ -208,17 +208,20 @@ curl http://localhost:8000/api/v1/agents/<AGENT_ID>/evals/<EVAL_ID> | head -c 40
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `AGENTFORGE_LLM_PROVIDER` | `mock` | `mock` / `openai` / `anthropic` / `deepseek` / `qwen`（后两个走 OpenAI 兼容，按 `PROVIDER_PRESETS` 自动选 `base_url` + `default_model`） |
+| `AGENTFORGE_LLM_PROVIDER` | `mock` | 另支持 `openai` / `anthropic` / `deepseek` / `qwen` / `kimi` / `glm` / `doubao` |
 | `AGENTFORGE_LLM_MODEL` | `mock-model` | 对应 provider 下的模型名 |
 | `AGENTFORGE_OPENAI_API_KEY` | — | 用 OpenAI 时填 |
 | `AGENTFORGE_ANTHROPIC_API_KEY` | — | 用 Anthropic 时填 |
+| `AGENTFORGE_KIMI_API_KEY` / `AGENTFORGE_GLM_API_KEY` / `AGENTFORGE_DOUBAO_API_KEY` | — | 对应新 Provider 的独立密钥，不会复用 OpenAI key |
 | `AGENTFORGE_DATABASE_URL` | `sqlite+aiosqlite:///./agentforge.db` | 默认 SQLite；换 PG 可写 `postgresql+asyncpg://...` |
 | `AGENTFORGE_MAX_STEPS` | `8` | 单次跑最多几步 |
 | `AGENTFORGE_MAX_TOKENS` | `8000` | 上下文窗口上限 |
 | `AGENTFORGE_SANDBOX_MODE` | `local` | `local` = 子进程；`docker` = Docker 容器 |
 | `AGENTFORGE_SANDBOX_IMAGE` | `agentforge-sandbox` | `docker` 模式下的镜像名 |
-| `AGENTFORGE_VECTOR_BACKEND` | 占位字段 | 未起作用；预留作未来换 ChromaDB |
-| `AGENTFORGE_VECTOR_URL` | 占位字段 | 同上 |
+| `AGENTFORGE_VECTOR_BACKEND` | `inprocess` | `inprocess` / `qdrant`；Compose 默认 `qdrant` |
+| `AGENTFORGE_VECTOR_URL` | `http://localhost:6333` | Qdrant 服务地址 |
+| `AGENTFORGE_EMBEDDING_PROVIDER` | `hashing` | `hashing` / `sentence_transformers` |
+| `AGENTFORGE_EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 本地路径或模型名；默认只读本地文件，避免离线环境意外下载 |
 | `AGENTFORGE_API_TOKEN` | 空 | 非空时所有 API（健康检查除外）要求 `X-API-Key` 或 Bearer token；前端设同样的 `VITE_API_TOKEN` |
 | `AGENTFORGE_ENABLE_DANGEROUS_TOOLS` | `false` | 总开关：默认拒绝 shell、文件、HTTP 和高风险工具 |
 | `AGENTFORGE_FILE_ALLOWED_DIRS` | `[]` | JSON 数组；文件工具只能访问这些目录及其子目录 |
@@ -271,6 +274,7 @@ curl http://localhost:8000/api/v1/agents/<AGENT_ID>/evals/<EVAL_ID> | head -c 40
 | POST   | `/api/v1/agents/{agent_id}/evals`            | 提交一次评测（后台运行，立即返回占位 run） |
 | GET    | `/api/v1/agents/{agent_id}/evals/{eval_id}`  | 查看一次评测的详情（含每道题的 `cases` 数组） |
 | GET    | `/api/v1/agents/{agent_id}/evals/{eval_id}/progress` | 轮询评测进度（`done`/`total`/`passed`/`failed`） |
+| POST   | `/api/v1/agents/{agent_id}/evals/{eval_id}/cancel` | 独立取消一次评测 |
 | DELETE | `/api/v1/agents/{agent_id}/evals/{eval_id}`  | 删除一次评测 |
 
 > **已移除的旧端点**：早期 README 里的 `GET /api/v1/runs/{id}`、`GET /api/v1/evals/{id}`、

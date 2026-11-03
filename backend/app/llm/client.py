@@ -1599,6 +1599,18 @@ _PROVIDER_PRESETS: dict[str, dict[str, str]] = {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "default_model": "qwen-plus",
     },
+    "kimi": {
+        "base_url": "https://api.moonshot.cn/v1",
+        "default_model": "moonshot-v1-8k",
+    },
+    "glm": {
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "default_model": "glm-4-flash",
+    },
+    "doubao": {
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "default_model": "doubao-seed-1-6-250615",
+    },
     "openai": {
         "base_url": "https://api.openai.com/v1",
         "default_model": "gpt-4o-mini",
@@ -1620,8 +1632,9 @@ def make_client(
 ) -> "LLMClient | AnthropicClient":
     """Construct an LLM client from a provider preset.
 
-    ``provider`` may be one of ``"deepseek"``, ``"qwen"``, ``"openai"``,
-    ``"anthropic"`` or any arbitrary name – in the latter case the caller
+    ``provider`` may be one of ``"deepseek"``, ``"qwen"``, ``"kimi"``,
+    ``"glm"``, ``"doubao"``, ``"openai"``, ``"anthropic"`` or any
+    arbitrary name – in the latter case the caller
     must pass ``base_url`` via ``kwargs``.
 
     Anthropic routes through :class:`AnthropicClient` (different schema,

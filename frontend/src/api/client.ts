@@ -213,7 +213,8 @@ export interface EvalRun {
   dataset: string;
   scorer: string;
   pass_threshold: number;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
+  priority: number;
   total: number;
   passed: number;
   failed: number;
@@ -310,4 +311,6 @@ export const Evals = {
     agentId: string,
     data: { dataset_name: string; scorer: string; pass_threshold: number; cases: EvalCase[] },
   ) => api.post<EvalRun>(`/agents/${agentId}/evals`, data).then((r) => r.data),
+  cancel: (agentId: string, evalId: string) =>
+    api.post<EvalRun>(`/agents/${agentId}/evals/${evalId}/cancel`).then((r) => r.data),
 };

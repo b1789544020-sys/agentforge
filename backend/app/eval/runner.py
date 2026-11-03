@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.loop import AgentLoop, LoopResult
 from app.eval.metrics import Metrics
+from app.eval.scheduler import get_eval_scheduler
 from app.eval.scorer import (
     AgentRunResult,
     EvalScorer,
@@ -231,6 +232,8 @@ class EvalRunner:
         pass_threshold: float = 0.7,
         max_concurrency: int = 2,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
+        cancel_event: asyncio.Event | None = None,
+        priority: int = 0,
     ) -> None:
         # ``session`` is the parent session used for the bookkeeping
         # queries (loading the dataset, writing the ``EvalRun`` row and
@@ -248,6 +251,43 @@ class EvalRunner:
         self.scorer: Scorer | AsyncScorer = scorer or Metrics.exact_match
         self.pass_threshold = pass_threshold
         self.semaphore = asyncio.Semaphore(max(1, max_concurrency))
+        self.cancel_event = cancel_event or asyncio.Event()
+        self.priority = priority
+
+    async def _run_agent_loop(self, loop: AgentLoop, user_input: str) -> LoopResult:
+        """Run one case and cooperatively cancel it with its eval run."""
+        if self.cancel_event.is_set():
+            loop.cancel()
+        run_task = asyncio.create_task(loop.run(user_input))
+        cancel_task = asyncio.create_task(self.cancel_event.wait())
+        try:
+            await asyncio.wait(
+                {run_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancel_task.done():
+                loop.cancel()
+            result = await run_task
+            # Cancellation and provider completion can become ready in the
+            # same event-loop turn.  Since the eval was still active when
+            # cancellation was requested, make the terminal result coherent
+            # in both the returned value and the persisted Agent run.
+            if self.cancel_event.is_set() and result.status != "cancelled":
+                result.status = "cancelled"
+                result.error = "cancelled"
+                result.output = ""
+                if loop._run is not None:
+                    loop._run.status = "cancelled"
+                    loop._run.error = "cancelled"
+                    loop._run.output = ""
+                    loop._run.finished_at = datetime.utcnow()
+                    await loop.session.commit()
+            return result
+        finally:
+            cancel_task.cancel()
+            try:
+                await cancel_task
+            except asyncio.CancelledError:
+                pass
 
     def _resolve_session_factory(self) -> async_sessionmaker[AsyncSession]:
         """Return the per-case sessionmaker, resolving the production
@@ -288,7 +328,7 @@ class EvalRunner:
             run_row.passed = 0
             run_row.failed = 0
             run_row.average_score = 0.0
-            run_row.status = "running"
+            run_row.status = "cancelling" if self.cancel_event.is_set() else "running"
             run_row.started_at = datetime.utcnow()
         await self.session.commit()
 
@@ -376,7 +416,7 @@ class EvalRunner:
                 persisted_run.failed = failed
                 persisted_run.average_score = avg
                 persisted_run.duration_ms = duration_ms
-                persisted_run.status = "completed"
+                persisted_run.status = "cancelled" if self.cancel_event.is_set() else "completed"
                 persisted_run.finished_at = datetime.utcnow()
                 # Denormalised per-case cache for the list-runs endpoint.
                 persisted_run.results = json.dumps(
@@ -499,7 +539,7 @@ class EvalRunner:
             run_row.passed = 0
             run_row.failed = 0
             run_row.average_score = 0.0
-            run_row.status = "running"
+            run_row.status = "cancelling" if self.cancel_event.is_set() else "running"
             run_row.started_at = datetime.utcnow()
             run_row.finished_at = None
             run_row.results = None
@@ -568,7 +608,7 @@ class EvalRunner:
                 # failed, so the run itself is always marked
                 # "completed".  A separate ``failed`` counter tracks
                 # the cases that did not pass.
-                run_row.status = "completed"
+                run_row.status = "cancelled" if self.cancel_event.is_set() else "completed"
                 run_row.finished_at = datetime.utcnow()
                 # Mirror the per-case result on the run row as well so
                 # the "list runs" API can show them without N+1
@@ -634,7 +674,7 @@ class EvalRunner:
         (``Run`` / ``Step`` rows) and concurrent cases sharing one
         session would race.
         """
-        async with self.semaphore:
+        async with self.semaphore, get_eval_scheduler().slot(priority=self.priority):
             start = time.perf_counter()
             error: str | None = None
             output = ""
@@ -642,37 +682,38 @@ class EvalRunner:
             tool_calls: list[dict[str, Any]] = []
             status = "failed"
             try:
-                async with self._resolve_session_factory()() as case_session:
-                    loop = AgentLoop(self.agent, case_session)
-                    result: LoopResult = await loop.run(test_case.input)
-                output = result.output
-                tokens = result.total_tokens
-                status = result.status or "completed"
-                # Pull tool calls out of the trace for the UI.  Each
-                # step's payload may contain {"tool": "name", "args": ...}
-                # but we only need a thin summary here.
-                for step in getattr(result, "steps", []) or []:
-                    payload = step.get("payload") if isinstance(step, dict) else None
-                    if not isinstance(payload, dict):
-                        continue
-                    tool_name = (
-                        payload.get("name")
-                        or payload.get("tool")
-                        or payload.get("tool_name")
-                    )
-                    if tool_name:
-                        tool_calls.append(
-                            {
-                                "name": tool_name,
-                                "args": payload.get("args")
-                                or payload.get("input"),
-                                "output": payload.get("output")
-                                or payload.get("result"),
-                                "status": step.get("status", "ok"),
-                            }
+                if self.cancel_event.is_set():
+                    status = "cancelled"
+                    error = "cancelled"
+                else:
+                    async with self._resolve_session_factory()() as case_session:
+                        loop = AgentLoop(self.agent, case_session)
+                        result: LoopResult = await self._run_agent_loop(loop, test_case.input)
+                    output = result.output
+                    tokens = result.total_tokens
+                    status = result.status or "completed"
+                if error is None:
+                    # Pull tool calls out of the trace for the UI.
+                    for step in getattr(result, "steps", []) or []:
+                        payload = step.get("payload") if isinstance(step, dict) else None
+                        if not isinstance(payload, dict):
+                            continue
+                        tool_name = (
+                            payload.get("name")
+                            or payload.get("tool")
+                            or payload.get("tool_name")
                         )
-                if result.status not in ("success", "completed", "ok"):
-                    error = result.error or result.status
+                        if tool_name:
+                            tool_calls.append(
+                                {
+                                    "name": tool_name,
+                                    "args": payload.get("args") or payload.get("input"),
+                                    "output": payload.get("output") or payload.get("result"),
+                                    "status": step.get("status", "ok"),
+                                }
+                            )
+                    if result.status not in ("success", "completed", "ok"):
+                        error = result.error or result.status
             except Exception as exc:  # noqa: BLE001
                 error = f"{exc.__class__.__name__}: {exc}"
                 logger.exception("Eval case failed: %s", exc)
@@ -751,24 +792,22 @@ class EvalRunner:
     async def _run_one(
         self, case_id: str, index: int, raw: dict[str, Any]
     ) -> CaseResult:
-        async with self.semaphore:
+        async with self.semaphore, get_eval_scheduler().slot(priority=self.priority):
             start = time.perf_counter()
             error: str | None = None
             output = ""
             tokens = 0
             try:
-                # Use a fresh session per case to avoid races between
-                # concurrent cases sharing the bookkeeping session.
-                async with self._resolve_session_factory()() as case_session:
-                    loop = AgentLoop(self.agent, case_session)
-                    result: LoopResult = await loop.run(raw.get("input", ""))
-                output = result.output
-                tokens = result.total_tokens
-                # Mirror the success-set used by ``_run_eval_one`` so that
-                # a ``completed``/``ok`` status is not misreported as an
-                # error (which would zero out the case's ``passed`` flag).
-                if result.status not in ("success", "completed", "ok", None, ""):
-                    error = result.error or result.status
+                if self.cancel_event.is_set():
+                    error = "cancelled"
+                else:
+                    async with self._resolve_session_factory()() as case_session:
+                        loop = AgentLoop(self.agent, case_session)
+                        result: LoopResult = await self._run_agent_loop(loop, raw.get("input", ""))
+                    output = result.output
+                    tokens = result.total_tokens
+                    if result.status not in ("success", "completed", "ok", None, ""):
+                        error = result.error or result.status
             except Exception as exc:  # noqa: BLE001
                 error = f"{exc.__class__.__name__}: {exc}"
                 logger.exception("Eval case failed: %s", exc)

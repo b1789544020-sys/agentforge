@@ -361,11 +361,15 @@ EVAL_STATUS_PENDING = "pending"
 EVAL_STATUS_RUNNING = "running"
 EVAL_STATUS_COMPLETED = "completed"
 EVAL_STATUS_FAILED = "failed"
+EVAL_STATUS_CANCELLING = "cancelling"
+EVAL_STATUS_CANCELLED = "cancelled"
 EVAL_STATUSES: tuple[str, ...] = (
     EVAL_STATUS_PENDING,
     EVAL_STATUS_RUNNING,
     EVAL_STATUS_COMPLETED,
     EVAL_STATUS_FAILED,
+    EVAL_STATUS_CANCELLING,
+    EVAL_STATUS_CANCELLED,
 )
 
 
@@ -560,6 +564,7 @@ class EvalRun(Base):
     pass_threshold: Mapped[float] = mapped_column(
         Float, nullable=False, default=0.7
     )
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # JSON list of case results
     results: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

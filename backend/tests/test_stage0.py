@@ -119,8 +119,9 @@ def test_compose_defaults_are_accepted_by_the_application() -> None:
         return value.split(":-", 1)[1][:-1] if value.startswith("${") else value
 
     assert default_value(environment["AGENTFORGE_DATABASE_URL"]).startswith("postgresql+asyncpg://")
-    assert default_value(environment["AGENTFORGE_VECTOR_BACKEND"]) == "inprocess"
+    assert default_value(environment["AGENTFORGE_VECTOR_BACKEND"]) == "qdrant"
     assert "postgres" in compose["services"]
+    assert "qdrant" in compose["services"]
 
 
 @pytest.mark.asyncio

@@ -165,6 +165,7 @@ class EvalCreate(BaseModel):
     # 0.1.2 5.1 轮: 真并发. 默认 4 (= 4 核 CPU 一次跑 4 个 case).
     # 调高会撑爆 LLM 速率; 设为 1 = 串行 (兼容 0.1.0 行为).
     max_concurrency: int = 4
+    priority: int = 0
 
     @property
     def is_dataset_ref(self) -> bool:  # noqa: D401 - tiny helper
@@ -223,6 +224,7 @@ class EvalRunOut(OrmModel):
     dataset: str
     scorer: str | None = None
     pass_threshold: float = 0.7
+    priority: int = 0
     total: int
     passed: int
     failed: int

@@ -81,6 +81,7 @@
     "col_expected": "期望答案",
     "start": "开考",
     "running": "考试中…",
+    "cancel": "取消评测",
     "past": "历次考试",
     "empty": "还没有考试记录。",
     "col_dataset": "试卷",
