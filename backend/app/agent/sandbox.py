@@ -458,6 +458,7 @@ class DockerSandbox:
         self.cpu_quota = s.sandbox_cpu_quota
         self.network_disabled = s.sandbox_network_disabled
         self.timeout = s.sandbox_timeout_seconds
+        self.max_output_bytes = 64 * 1024
         self._client: Any | None = None
         self._check_docker()
 
@@ -472,6 +473,20 @@ class DockerSandbox:
         except Exception as exc:  # noqa: BLE001
             raise SandboxError(f"Docker daemon unreachable: {exc}") from exc
 
+    def _container_options(self) -> dict[str, Any]:
+        return {
+            "mem_limit": self.memory,
+            "cpu_quota": int(self.cpu_quota * 100_000),
+            "network_disabled": self.network_disabled,
+            "read_only": True,
+            "tmpfs": {"/tmp": "rw,nosuid,size=64m", "/workspace": "rw,nosuid,size=64m"},
+            "cap_drop": ["ALL"],
+            "security_opt": ["no-new-privileges:true"],
+            "pids_limit": 128,
+            "working_dir": "/workspace",
+            "user": "10001:10001",
+        }
+
     async def run_python(self, code: str, stdin_args: Any | None = None) -> SandboxResult:
         assert self._client is not None
         if stdin_args is not None:
@@ -484,23 +499,19 @@ class DockerSandbox:
         else:
             wrapped = textwrap.dedent(code)
 
-        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
-            f.write(wrapped)
-            host_path = f.name
+        import base64
 
-        container_path = "/sandbox/script.py"
+        encoded = base64.b64encode(wrapped.encode("utf-8")).decode("ascii")
+        command = f"import base64;exec(base64.b64decode('{encoded}'))"
         start = time.perf_counter()
         try:
             container = self._client.containers.run(  # type: ignore[union-attr]
                 image=self.image,
-                command=["python", "-I", container_path],
-                volumes={host_path: {"bind": container_path, "mode": "ro"}},
-                mem_limit=self.memory,
-                cpu_quota=int(self.cpu_quota * 100_000),
-                network_disabled=self.network_disabled,
+                entrypoint=["python", "-I"],
+                command=["-c", command],
                 detach=True,
                 remove=False,
-                user="nobody",
+                **self._container_options(),
             )
             try:
                 result = container.wait(timeout=self.timeout)
@@ -516,11 +527,6 @@ class DockerSandbox:
                     pass
         except Exception as exc:  # noqa: BLE001
             raise SandboxError(f"Docker sandbox failed: {exc}") from exc
-        finally:
-            try:
-                os.unlink(host_path)
-            except OSError:
-                pass
 
         duration_ms = int((time.perf_counter() - start) * 1000)
         return SandboxResult(
@@ -544,20 +550,21 @@ class DockerSandbox:
         """
         assert self._client is not None
         effective_timeout = float(timeout_s) if timeout_s is not None else float(self.timeout)
-        shell_cmd = " ".join([command, *(args or [])]).strip()
+        import shlex
+
+        if cwd and cwd != "/workspace":
+            raise SandboxError("Docker shell cwd must be /workspace")
+        shell_cmd = shlex.join([command, *(args or [])]).strip()
         max_output = self.max_output_bytes
         start = time.perf_counter()
         try:
             container = self._client.containers.run(  # type: ignore[union-attr]
                 image=self.image,
-                command=["sh", "-c", shell_cmd],
-                mem_limit=self.memory,
-                cpu_quota=int(self.cpu_quota * 100_000),
-                network_disabled=self.network_disabled,
-                working_dir=cwd,
+                entrypoint=["sh", "-c"],
+                command=shell_cmd,
                 detach=True,
                 remove=False,
-                user="nobody",
+                **self._container_options(),
             )
             try:
                 result = container.wait(timeout=effective_timeout)
@@ -600,11 +607,13 @@ def get_sandbox() -> _AsyncSandbox:
     global _default_sandbox
     if _default_sandbox is None:
         s = _settings()
-        if s.sandbox_enabled:
+        if s.sandbox_enabled or getattr(s, "sandbox_required", False):
             try:
                 _default_sandbox = DockerSandbox()
                 logger.info("Using DockerSandbox (image=%s)", s.sandbox_image)
             except SandboxError as exc:
+                if getattr(s, "sandbox_required", False):
+                    raise
                 logger.warning("Falling back to LocalSandbox: %s", exc)
                 _default_sandbox = LocalSandbox()
         else:

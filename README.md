@@ -144,12 +144,13 @@ agentforge/
    ```bash
    cp .env.example .env   # 在 Windows 上手动复制重命名
    ```
-2. 启动：
+2. 编辑 `.env`，将 `AGENTFORGE_SECRET_KEY` 换成高熵随机值（Compose 未设置时会拒绝启动）；按宿主实际情况设置 `DOCKER_GID`。
+3. 启动：
    ```bash
    docker compose up --build
    ```
    默认启动 PostgreSQL、Qdrant、Redis、一次性 migration、双 worker API、Celery worker/Beat、Nginx 前端和沙箱模板。迁移成功且 API 健康后 Celery 才启动。当前环境若未安装 Docker，请先完成本地开发验证，不要把配置检查当作容器验收。
-3. 打开浏览器：
+4. 打开浏览器：
    - 前端：http://localhost:5173
    - API 文档：http://localhost:8000/docs
    - 健康检查：http://localhost:8000/api/v1/health
@@ -222,7 +223,10 @@ curl http://localhost:8000/api/v1/agents/<AGENT_ID>/evals/<EVAL_ID> | head -c 40
 | `AGENTFORGE_VECTOR_URL` | `http://localhost:6333` | Qdrant 服务地址 |
 | `AGENTFORGE_EMBEDDING_PROVIDER` | `hashing` | `hashing` / `sentence_transformers` |
 | `AGENTFORGE_EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 本地路径或模型名；默认只读本地文件，避免离线环境意外下载 |
-| `AGENTFORGE_API_TOKEN` | 空 | 非空时所有 API（健康检查除外）要求 `X-API-Key` 或 Bearer token；前端设同样的 `VITE_API_TOKEN` |
+| `AGENTFORGE_API_TOKEN` | 空 | 兼容自托管静态管理员 token；前端设同样的 `VITE_API_TOKEN` |
+| `AGENTFORGE_AUTH_ENABLED` | `false` | 是否启用用户/JWT；Compose 默认 `true` |
+| `AGENTFORGE_SECRET_KEY` | 开发默认值 | JWT 签名密钥；Compose 强制要求显式配置高熵随机值 |
+| `AGENTFORGE_SANDBOX_REQUIRED` | `false` | `true` 时 Docker 不可用就拒绝执行，禁止退回宿主子进程 |
 | `AGENTFORGE_ENABLE_DANGEROUS_TOOLS` | `false` | 总开关：默认拒绝 shell、文件、HTTP 和高风险工具 |
 | `AGENTFORGE_FILE_ALLOWED_DIRS` | `[]` | JSON 数组；文件工具只能访问这些目录及其子目录 |
 | `AGENTFORGE_HTTP_ALLOWED_HOSTS` | `[]` | JSON 数组；HTTP 工具只允许这些主机，支持 `*.example.com` |
@@ -235,11 +239,19 @@ curl http://localhost:8000/api/v1/agents/<AGENT_ID>/evals/<EVAL_ID> | head -c 40
 
 > **持久执行**：Run 每个完整迭代提交 `RunState`，EvalRun 保存请求快照。Celery 使用 late-ack、worker-lost requeue、每任务 Redis 锁和超时看门狗；恢复是 at-least-once，Eval 重放前清理部分结果，避免重复计数。暂停/恢复、取消和 WebSocket 跨 worker 走 Redis。多 worker 的迁移只由 `migrate` 服务执行，启动恢复另有 Redis 锁防重复投递。
 
+> **强制沙箱**：`AGENTFORGE_SANDBOX_REQUIRED=true` 时禁止 Docker 故障降级。执行容器使用 UID 10001、只读根文件系统、受限 tmpfs、`cap_drop=ALL`、no-new-privileges、PID/CPU/内存限制和默认断网；脚本不再从宿主目录挂载。Socket 权限通过 `DOCKER_GID` 配置。以上只完成代码与 mock 验证，真实 Docker 启动、网络隔离和资源限制仍需在 Docker Desktop/WSL 2 环境验收。
+
 ---
 
 ## 📜 API 一览 · API surface
 
 以下是 **所有** REST 路由（全部在 `/api/v1` 前缀下；`/api/...` 是等价的别名）。完整 schema 看 http://localhost:8000/docs 。
+
+### Auth 与权限
+- `POST /auth/register`：注册用户并返回 JWT；首个用户为 admin，后续为 user。
+- `POST /auth/login`、`GET /auth/me`：登录与当前用户。
+- `GET /admin/users`、`PATCH /admin/users/{user_id}/role`：管理员用户与角色管理。
+- 普通用户只能访问自己的 Agent 及其 Run/Eval/Memory/Prompt/WebSocket；越权统一返回 404。静态 token 作为兼容管理员主体。登录/注册有基础频率限制，密码使用 bcrypt，JWT 有过期时间。
 
 ### Agents
 | 方法 | 路径 | 说明 |

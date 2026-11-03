@@ -84,6 +84,7 @@ def test_alembic_upgrade_creates_all_tables(sqlite_file: Path) -> None:
         "tool_metadata",  # 0.1.3 #3 -- plugin layer
         "prompt_templates",
         "prompt_versions",
+        "users",
         "alembic_version",
     }
     assert expected.issubset(tables), (
@@ -91,10 +92,12 @@ def test_alembic_upgrade_creates_all_tables(sqlite_file: Path) -> None:
     )
     cn = sqlite3.connect(str(sqlite_file))
     try:
+        agent_columns = {row[1] for row in cn.execute("PRAGMA table_info(agents)")}
         run_columns = {row[1] for row in cn.execute("PRAGMA table_info(agent_runs)")}
         eval_columns = {row[1] for row in cn.execute("PRAGMA table_info(eval_runs)")}
     finally:
         cn.close()
+    assert "owner_id" in agent_columns
     assert "config" in run_columns
     assert "priority" in eval_columns
     assert "request" in eval_columns
@@ -119,6 +122,7 @@ def test_alembic_downgrade_drops_everything(sqlite_file: Path) -> None:
         "tool_metadata",  # 0.1.3 #3 -- must also be removed on downgrade
         "prompt_templates",
         "prompt_versions",
+        "users",
     }
     assert model_tables.isdisjoint(tables), (
         f"still present: {model_tables & tables}"

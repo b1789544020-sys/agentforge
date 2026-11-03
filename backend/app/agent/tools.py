@@ -778,7 +778,7 @@ async def python_eval(expression: str, mode: str = "math") -> str:
             SandboxError = Exception  # type: ignore
         if get_settings is not None and get_sandbox is not None:
             settings = get_settings()
-            if getattr(settings, "sandbox_enabled", False):
+            if getattr(settings, "sandbox_enabled", False) or getattr(settings, "sandbox_required", False):
                 # The AST gate above already vetted the expression; the
                 # subprocess rebuilds a tiny namespace so a fresh Python
                 # interpreter also rejects any direct access to
@@ -944,7 +944,9 @@ async def shell_exec(command: str, **kwargs: Any) -> Dict[str, Any]:
     except Exception:  # pragma: no cover - settings unavailable
         settings = None
 
-    if settings is not None and getattr(settings, "sandbox_enabled", False):
+    if settings is not None and (
+        getattr(settings, "sandbox_enabled", False) or getattr(settings, "sandbox_required", False)
+    ):
         try:
             from app.agent.sandbox import get_sandbox, SandboxError  # type: ignore
 

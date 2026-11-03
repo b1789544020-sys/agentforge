@@ -32,17 +32,32 @@ function normaliseApiBase(raw: string): string {
 }
 export const API_BASE = normaliseApiBase(RAW_BASE);
 export const API_TOKEN = (import.meta.env.VITE_API_TOKEN ?? "").trim();
+const JWT_STORAGE_KEY = "agentforge.jwt";
+
+export function getAccessToken(): string {
+  return localStorage.getItem(JWT_STORAGE_KEY) ?? "";
+}
+export function setAccessToken(token: string): void {
+  if (token) localStorage.setItem(JWT_STORAGE_KEY, token);
+  else localStorage.removeItem(JWT_STORAGE_KEY);
+}
 
 export const api = axios.create({
   baseURL: API_BASE,
   timeout: 60_000,
   headers: API_TOKEN ? { "X-API-Key": API_TOKEN } : undefined,
 });
+api.interceptors.request.use((config) => {
+  const jwt = getAccessToken();
+  if (jwt) config.headers.Authorization = `Bearer ${jwt}`;
+  return config;
+});
 
 /** Browser-safe WebSocket credentials that never put the token in a URL. */
 export function streamProtocols(): string[] | undefined {
-  if (!API_TOKEN) return undefined;
-  const bytes = new TextEncoder().encode(API_TOKEN);
+  const token = getAccessToken() || API_TOKEN;
+  if (!token) return undefined;
+  const bytes = new TextEncoder().encode(token);
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   const encoded = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -319,6 +334,28 @@ export const Evals = {
   ) => api.post<EvalRun>(`/agents/${agentId}/evals`, data).then((r) => r.data),
   cancel: (agentId: string, evalId: string) =>
     api.post<EvalRun>(`/agents/${agentId}/evals/${evalId}/cancel`).then((r) => r.data),
+};
+
+export interface User {
+  id: string | null;
+  email: string | null;
+  role: "admin" | "user";
+  is_static?: boolean;
+}
+
+export const Auth = {
+  login: (email: string, password: string) =>
+    api.post<{ access_token: string; user: User }>("/auth/login", { email, password }).then((r) => {
+      setAccessToken(r.data.access_token);
+      return r.data.user;
+    }),
+  register: (email: string, password: string) =>
+    api.post<{ access_token: string; user: User }>("/auth/register", { email, password }).then((r) => {
+      setAccessToken(r.data.access_token);
+      return r.data.user;
+    }),
+  me: () => api.get<User>("/auth/me").then((r) => r.data),
+  logout: () => setAccessToken(""),
 };
 
 export interface PromptVersion {

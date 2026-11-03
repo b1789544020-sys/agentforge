@@ -114,6 +114,7 @@ class Settings(BaseSettings):
     sandbox_cpu_quota: float = 1.0
     sandbox_network_disabled: bool = True
     sandbox_timeout_seconds: int = 30
+    sandbox_required: bool = False
 
     # ---- Memory ------------------------------------------------------
     memory_max_items: int = 1000
@@ -145,6 +146,7 @@ class Settings(BaseSettings):
     # Empty keeps the local single-user demo frictionless.  Setting this
     # value protects every HTTP API (health excluded) and run WebSocket.
     api_token: str | None = None
+    auth_enabled: bool = False
     enable_dangerous_tools: bool = False
     file_allowed_dirs: list[str] = Field(default_factory=list)
     http_allowed_hosts: list[str] = Field(default_factory=list)

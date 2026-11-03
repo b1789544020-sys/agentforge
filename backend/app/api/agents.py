@@ -7,9 +7,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.auth import _auth_required, get_principal
 
 from app.agent.exporter import (
     agents_from_payload,
@@ -33,6 +35,14 @@ from app.database import get_session
 from app.models import Agent, Memory
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+def _owner_filter(request: Request) -> str | None:
+    """Return the non-admin owner id used to scope bulk Agent queries."""
+    if not _auth_required():
+        return None
+    principal = get_principal(request)
+    return None if principal.role == "admin" else principal.user_id
 
 
 def _serialize_agent(agent: Agent) -> dict[str, Any]:
@@ -66,18 +76,24 @@ def _serialize_agent(agent: Agent) -> dict[str, Any]:
 
 @router.get("", response_model=list[AgentOut])
 async def list_agents(
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    rows = (await session.execute(select(Agent).order_by(Agent.created_at.desc()))).scalars().all()
+    stmt = select(Agent).order_by(Agent.created_at.desc())
+    owner_id = _owner_filter(request)
+    if owner_id is not None:
+        stmt = stmt.where(Agent.owner_id == owner_id)
+    rows = (await session.execute(stmt)).scalars().all()
     return [_serialize_agent(a) for a in rows]
 
 
 @router.post("", response_model=AgentOut, status_code=status.HTTP_201_CREATED)
 async def create_agent(
-    payload: AgentCreate, session: AsyncSession = Depends(get_session)
+    payload: AgentCreate, request: Request, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
     agent = Agent(
         id=str(uuid.uuid4()),
+        owner_id=_owner_filter(request),
         name=payload.name,
         description=payload.description,
         system_prompt=payload.system_prompt,
@@ -163,6 +179,7 @@ def _resolve_export_format(fmt: str | None) -> str:
 
 @router.post("/export", response_class=Response)
 async def export_agents(
+    request: Request,
     payload: ExportRequest | None = None,
     fmt: str = Query(default="json"),
     session: AsyncSession = Depends(get_session),
@@ -180,18 +197,21 @@ async def export_agents(
     """
     fmt = _resolve_export_format(fmt)
     agent_ids = payload.agent_ids if payload else None
+    owner_id = _owner_filter(request)
     if agent_ids is None:
-        rows = (
-            await session.execute(select(Agent).order_by(Agent.created_at.desc()))
-        ).scalars().all()
+        stmt = select(Agent).order_by(Agent.created_at.desc())
+        if owner_id is not None:
+            stmt = stmt.where(Agent.owner_id == owner_id)
+        rows = (await session.execute(stmt)).scalars().all()
     else:
         if not agent_ids:
             raise HTTPException(
                 status_code=400, detail="agent_ids must be non-empty if provided"
             )
-        rows = (
-            await session.execute(select(Agent).where(Agent.id.in_(agent_ids)))
-        ).scalars().all()
+        stmt = select(Agent).where(Agent.id.in_(agent_ids))
+        if owner_id is not None:
+            stmt = stmt.where(Agent.owner_id == owner_id)
+        rows = (await session.execute(stmt)).scalars().all()
         found = {a.id for a in rows}
         missing = [aid for aid in agent_ids if aid not in found]
         if missing:
@@ -214,6 +234,7 @@ async def export_agents(
 
 @router.post("/import", response_model=dict)
 async def import_agents(
+    request: Request,
     file: UploadFile = File(...),
     on_conflict: str = Form("skip"),
     fmt: str | None = Form(None),
@@ -256,11 +277,13 @@ async def import_agents(
     created: list[str] = []
     updated: list[str] = []
     skipped: list[str] = []
+    owner_id = _owner_filter(request)
     for row in rows:
         name = row["name"]
-        existing = (
-            await session.execute(select(Agent).where(Agent.name == name))
-        ).scalars().first()
+        stmt = select(Agent).where(Agent.name == name)
+        if owner_id is not None:
+            stmt = stmt.where(Agent.owner_id == owner_id)
+        existing = (await session.execute(stmt)).scalars().first()
         if existing is not None:
             if on_conflict == "skip":
                 skipped.append(name)
@@ -285,6 +308,7 @@ async def import_agents(
 
         agent = Agent(
             id=str(uuid.uuid4()),
+            owner_id=owner_id,
             name=name,
             description=row.get("description"),
             system_prompt=row.get("system_prompt"),

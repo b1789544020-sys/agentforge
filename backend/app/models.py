@@ -62,6 +62,24 @@ def _new_uuid() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Users and ownership
+# ---------------------------------------------------------------------------
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="user")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, server_default=func.now()
+    )
+
+
+# ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
 
@@ -75,6 +93,9 @@ class Agent(Base):
         String(36), primary_key=True, default=_new_uuid
     )
 
+    owner_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     system_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

@@ -53,11 +53,11 @@ from typing import Any, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
-from app.api.auth import require_websocket_token
+from app.api.auth import get_websocket_principal, require_websocket_token
 from app.api.runs import _serialize_run
 from app.api.ws_broadcaster import broadcaster
 from app.database import async_session_factory
-from app.models import Run, Step
+from app.models import Agent, Run, Step
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,13 @@ async def stream_run(websocket: WebSocket, agent_id: str, run_id: str) -> None:
     async with async_session_factory() as session:
         run = await session.get(Run, run_id)
         if run is None or run.agent_id != agent_id:
+            await websocket.close(code=4404, reason="run not found")
+            return
+        principal = get_websocket_principal(websocket)
+        agent = await session.get(Agent, agent_id)
+        if principal is None or (
+            principal.role != "admin" and (agent is None or agent.owner_id != principal.user_id)
+        ):
             await websocket.close(code=4404, reason="run not found")
             return
 

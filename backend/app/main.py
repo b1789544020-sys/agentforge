@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.auth import require_api_token
+from app.api.auth import require_agent_access, require_api_token
 from app.api.agents import (
     memory_router,
     router as agents_router,
@@ -18,6 +19,7 @@ from app.api.evals import router as evals_router
 from app.api.prompts import router as prompts_router
 from app.api.runs import router as runs_router
 from app.api.tools_metadata import router as tools_metadata_router
+from app.api.users import router as users_router
 from app.api.ws import router as ws_router
 from app.api.ws_broadcaster import broadcaster
 from app.config import get_settings
@@ -105,7 +107,7 @@ def create_app() -> FastAPI:
     )
 
     # ---- Routers ----
-    protected = [Depends(require_api_token)]
+    protected = [Depends(require_api_token), Depends(require_agent_access)]
     http_routers = (
         (agents_router, "agents"),
         (runs_router, "runs"),
@@ -120,6 +122,8 @@ def create_app() -> FastAPI:
             app.include_router(
                 api_router, prefix=prefix, tags=[tag], dependencies=protected
             )
+    for prefix in (settings.api_prefix, "/api"):
+        app.include_router(users_router, prefix=prefix, tags=["auth"])
     # WebSocket authentication is performed in the handler because browsers
     # use a subprotocol credential rather than an arbitrary HTTP header.
     app.include_router(ws_router, prefix=settings.api_prefix, tags=["ws"])
@@ -129,8 +133,12 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["meta"])
     @app.get("/api/health", tags=["meta"])
     @app.get(f"{settings.api_prefix}/health", tags=["meta"])
-    async def health() -> dict[str, str]:
-        return {"status": "ok", "version": settings.app_version}
+    async def health() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "version": settings.app_version,
+            "auth_enabled": settings.auth_enabled or bool(settings.api_token),
+        }
 
     @app.get("/", tags=["meta"])
     async def root() -> dict[str, str]:

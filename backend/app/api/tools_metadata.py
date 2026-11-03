@@ -30,6 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.tools import ToolRegistry
+from app.api.auth import require_admin
 from app.database import get_session
 from app.models import ToolMetadata
 
@@ -200,7 +201,7 @@ async def get_tool(
     return merge_metadata(_spec_to_dict(spec), row)
 
 
-@router.put("/{name}/metadata", response_model=ToolMetadataOut)
+@router.put("/{name}/metadata", response_model=ToolMetadataOut, dependencies=[Depends(require_admin)])
 async def upsert_metadata(
     name: str,
     payload: ToolMetadataUpdate,
@@ -250,7 +251,7 @@ async def upsert_metadata(
     return merge_metadata(_spec_to_dict(spec), row)
 
 
-@router.delete("/{name}/metadata", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{name}/metadata", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])
 async def delete_metadata(
     name: str, session: AsyncSession = Depends(get_session)
 ) -> None:
