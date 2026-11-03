@@ -11,6 +11,7 @@ project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Multi-team RBAC, audit, and approvals.** Organizations, Teams and Memberships add super-admin/team-admin/developer/viewer authorization through a central permission matrix. Agent, Run, Eval, Memory, suite and WebSocket access now enforce team/owner scope; versioned resources carry team context into workers. Append-only audit logs cover resource/member/gate/approval operations, and dangerous-tool enablement follows a request → admin approval → audited effect workflow. Team/member/audit UI and permission-aware Agent controls are included.
 - **Quality gates and regression governance.** Agent saves now append immutable `AgentVersion` snapshots; fixed `EvalSuite` collections support manual/save/scheduled `GateRun` execution, persisted per-case failures and version diffs, threshold re-evaluation, reasoned admin bypass records, Celery dispatch, and a React quality-gate panel. See `docs/QUALITY_GATES.md` and `scripts/tests/quality_gate_e2e.py`.
 - **Production readiness stages 0–5.** Immutable Run/Eval snapshots and correct max-step termination; Qdrant and pluggable Chinese embeddings; additional LLM providers; unified evaluation, memory search and versioned Jinja prompts; Redis/Celery durable execution and cross-worker controls; JWT users/RBAC ownership; mandatory Docker sandbox options; JSON request logs, readiness/metrics, backup/restore and bounded load-test scripts. See `docs/PRODUCTION.md` for external acceptance items that remain unverified.
 

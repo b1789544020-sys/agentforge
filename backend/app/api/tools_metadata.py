@@ -24,15 +24,17 @@ import json
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.tools import ToolRegistry
-from app.api.auth import require_admin
+from app.api.auth import get_principal, require_admin
+from app.audit import record_audit
 from app.database import get_session
-from app.models import ToolMetadata
+from app.models import ApprovalRequest, ToolMetadata
+from app.rbac import team_role
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,11 @@ class ToolMetadataUpdate(BaseModel):
     category: Optional[str] = Field(default=None, max_length=50)
     parameters_schema: Optional[dict[str, Any]] = None
     enabled: Optional[bool] = None
+
+
+class ToolEnableRequest(BaseModel):
+    team_id: str
+    reason: str = Field(min_length=3, max_length=2000)
 
 
 class ToolMetadataOut(BaseModel):
@@ -199,6 +206,36 @@ async def get_tool(
         raise HTTPException(status_code=404, detail=f"tool {name!r} not registered")
     row = await session.get(ToolMetadata, name)
     return merge_metadata(_spec_to_dict(spec), row)
+
+
+@router.post("/{name}/enable-request", status_code=status.HTTP_202_ACCEPTED)
+async def request_tool_enable(
+    name: str, payload: ToolEnableRequest, request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    spec = ToolRegistry.spec(name)
+    if spec is None:
+        raise HTTPException(404, f"tool {name!r} not registered")
+    if spec.risk not in {"write", "network", "exec"} and not getattr(spec, "dangerous", False):
+        raise HTTPException(400, "approval is only required for dangerous tools")
+    principal = get_principal(request)
+    if principal.role != "admin":
+        role = await team_role(session, principal.user_id or "", payload.team_id)
+        if role is None:
+            raise HTTPException(404, "team not found")
+        if role == "viewer":
+            raise HTTPException(403, "viewer cannot request dangerous tool access")
+    row = ApprovalRequest(
+        team_id=payload.team_id, requester_id=principal.user_id or "static-admin",
+        action="tool.enable", target_type="tool", target_id=name,
+        payload=json.dumps({"name": name}), reason=payload.reason,
+    )
+    session.add(row)
+    await session.flush()
+    record_audit(session, request, action="approval.request", target_type="approval", target_id=row.id,
+                 team_id=row.team_id, detail={"operation": row.action, "target_id": name})
+    await session.commit()
+    return {"pending": True, "approval_id": row.id, "tool": name, "enabled": False}
 
 
 @router.put("/{name}/metadata", response_model=ToolMetadataOut, dependencies=[Depends(require_admin)])

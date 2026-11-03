@@ -10,11 +10,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import record_audit
 from app.agent.versions import agent_from_version
 from app.database import async_session_factory
 from app.eval.runner import EvalRunner
 from app.eval.scorer import EvalScorer
-from app.models import AgentVersion, EvalCase, EvalRun, EvalSuite, GatePolicy, GateRun
+from app.models import Agent, AgentVersion, EvalCase, EvalRun, EvalSuite, GatePolicy, GateRun
+from app.rbac import eval_case_scope
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +92,12 @@ async def create_gate_run(
     case_ids = [str(value) for value in _json(suite.case_ids, [])]
     if not case_ids:
         raise ValueError("suite has no cases")
-    found = set((await session.execute(select(EvalCase.id).where(EvalCase.id.in_(case_ids)))).scalars().all())
+    found = set((await session.execute(
+        select(EvalCase.id).where(
+            EvalCase.id.in_(case_ids),
+            eval_case_scope(Agent(id=version.agent_id, team_id=version.team_id, owner_id=suite.owner_id)),
+        )
+    )).scalars().all())
     missing = [case_id for case_id in case_ids if case_id not in found]
     if missing:
         raise ValueError(f"suite cases not found: {', '.join(missing)}")
@@ -106,7 +113,7 @@ async def create_gate_run(
         .order_by(AgentVersion.version_number.desc(), GateRun.created_at.desc()).limit(1)
     )).scalars().first()
     eval_run = EvalRun(
-        agent_id=version.agent_id, dataset=f"gate:{suite.name}", scorer=suite.scorer,
+        agent_id=version.agent_id, team_id=version.team_id, dataset=f"gate:{suite.name}", scorer=suite.scorer,
         pass_threshold=0.7, request=json.dumps({
             "kind": "gate", "agent_version_id": version.id, "suite_id": suite.id,
             "max_concurrency": 2,
@@ -120,6 +127,12 @@ async def create_gate_run(
         trigger_source=trigger_source, status="pending", threshold=float(threshold),
     )
     session.add(gate)
+    await session.flush()
+    record_audit(
+        session, None, action="gate.trigger", target_type="gate_run", target_id=gate.id,
+        team_id=version.team_id, actor_id=triggered_by,
+        detail={"agent_version_id": version.id, "suite_id": suite.id, "trigger_source": trigger_source},
+    )
     version.gate_status = "pending"
     await session.commit()
     await session.refresh(gate)

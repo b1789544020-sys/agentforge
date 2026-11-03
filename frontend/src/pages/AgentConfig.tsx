@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAgentStore } from "../stores/agentStore";
-import type { Agent } from "../api/client";
+import { Teams, type Agent, type Team } from "../api/client";
 
-export default function AgentConfig() {
+export default function AgentConfig({ canCreate = true, canDelete = true }: { canCreate?: boolean; canDelete?: boolean }) {
   const { t } = useTranslation();
   const { agents, tools, loading, error, loadAgents, loadTools, createAgent, deleteAgent } =
     useAgentStore();
   const [name, setName] = useState("");
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [teamId, setTeamId] = useState("");
   const [description, setDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("You are a helpful assistant.");
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
@@ -18,6 +20,10 @@ export default function AgentConfig() {
   useEffect(() => {
     loadAgents();
     loadTools();
+    Teams.list().then((rows) => {
+      setTeams(rows);
+      if (rows.length) setTeamId((current) => current || rows[0].id);
+    }).catch(() => setTeams([]));
   }, [loadAgents, loadTools]);
 
   const toggleTool = (toolName: string) => {
@@ -37,6 +43,7 @@ export default function AgentConfig() {
     try {
       await createAgent({
         name: name.trim(),
+        team_id: teamId || undefined,
         description: description.trim() || undefined,
         system_prompt: systemPrompt,
         tools: selectedTools,
@@ -56,9 +63,14 @@ export default function AgentConfig() {
       <h2>{t("config.title")}</h2>
       {error && <div className="banner err" role="alert">{error}</div>}
 
-      <section className="card">
+      {canCreate && <section className="card">
         <h3>{t("config.new_agent")}</h3>
         <form onSubmit={onCreate} className="form" noValidate>
+          {teams.length > 0 && <label>所属团队
+            <select value={teamId} onChange={(event) => setTeamId(event.target.value)}>
+              {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+            </select>
+          </label>}
           <label>
             {t("config.name")}
             <input
@@ -127,7 +139,7 @@ export default function AgentConfig() {
             </button>
           </div>
         </form>
-      </section>
+      </section>}
 
       <section className="card">
         <h3>
@@ -164,9 +176,9 @@ export default function AgentConfig() {
                   <td>{a.tools?.length ?? 0}</td>
                   <td className="muted">{new Date(a.created_at).toLocaleString()}</td>
                   <td style={{ textAlign: "right" }}>
-                    <button onClick={() => deleteAgent(a.id)} className="danger icon-only" title={t("config.delete")}>
+                    {canDelete && <button onClick={() => deleteAgent(a.id)} className="danger icon-only" title={t("config.delete")}>
                       🗑
-                    </button>
+                    </button>}
                   </td>
                 </tr>
               ))}

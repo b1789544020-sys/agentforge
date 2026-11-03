@@ -21,6 +21,7 @@ def runtime_snapshot(agent: Agent) -> dict[str, Any]:
     """Capture every field needed to reproduce this Agent configuration."""
     return {
         "name": agent.name,
+        "team_id": agent.team_id,
         "description": agent.description,
         "system_prompt": agent.system_prompt,
         "model": agent.model,
@@ -46,6 +47,7 @@ async def create_agent_version(
     snapshot = runtime_snapshot(agent)
     version = AgentVersion(
         agent_id=agent.id,
+        team_id=agent.team_id,
         version_number=int(latest or 0) + 1,
         snapshot=json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
         system_prompt=agent.system_prompt,
@@ -70,6 +72,7 @@ def agent_from_version(version: AgentVersion) -> Agent:
         raise ValueError("agent version snapshot is missing or invalid")
     return Agent(
         id=version.agent_id,
+        team_id=version.team_id or snapshot.get("team_id"),
         name=str(snapshot.get("name") or f"agent-{version.agent_id[:8]}"),
         description=snapshot.get("description"),
         system_prompt=snapshot.get("system_prompt"),

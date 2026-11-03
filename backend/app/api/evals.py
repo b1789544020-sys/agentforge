@@ -46,6 +46,7 @@ from app.eval.metrics import Metrics
 from app.eval.runner import EvalRunner
 from app.eval.scorer import EvalScorer
 from app.models import Agent, EvalCase, EvalRun
+from app.rbac import eval_case_scope
 
 router = APIRouter(prefix="/agents/{agent_id}/evals", tags=["evals"])
 
@@ -177,7 +178,7 @@ async def create_eval(
         # 404 when any referenced test case is missing.
         existing = (
             await session.execute(
-                select(EvalCase.id).where(EvalCase.id.in_(payload.test_case_ids))
+                select(EvalCase.id).where(EvalCase.id.in_(payload.test_case_ids), eval_case_scope(agent))
             )
         ).scalars().all()
         existing_set = set(existing)
@@ -200,6 +201,7 @@ async def create_eval(
     placeholder = EvalRun(
         id=eval_run_id,
         agent_id=agent_id,
+        team_id=agent.team_id,
         dataset=payload.dataset_name,
         # Persist the scorer name on the row so the API/UI can read it
         # back without consulting the registry at request time.
@@ -402,6 +404,7 @@ async def upload_eval_dataset(
     placeholder = EvalRun(
         id=eval_run_id,
         agent_id=agent_id,
+        team_id=agent.team_id,
         dataset=dataset_name,
         scorer=scorer_name or "composite",
         pass_threshold=float(pass_threshold),

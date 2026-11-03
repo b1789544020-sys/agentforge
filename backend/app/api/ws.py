@@ -102,11 +102,18 @@ async def stream_run(websocket: WebSocket, agent_id: str, run_id: str) -> None:
             return
         principal = get_websocket_principal(websocket)
         agent = await session.get(Agent, agent_id)
-        if principal is None or (
-            principal.role != "admin" and (agent is None or agent.owner_id != principal.user_id)
-        ):
+        if principal is None or agent is None:
             await websocket.close(code=4404, reason="run not found")
             return
+        if principal.role != "admin":
+            if agent.team_id:
+                from app.rbac import team_role
+                if await team_role(session, principal.user_id or "", agent.team_id) is None:
+                    await websocket.close(code=4404, reason="run not found")
+                    return
+            elif agent.owner_id != principal.user_id:
+                await websocket.close(code=4404, reason="run not found")
+                return
 
     offered_protocols = {
         item.strip()

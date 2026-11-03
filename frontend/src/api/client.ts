@@ -95,6 +95,7 @@ export function streamUrl(agentId: string, runId: string): string {
 
 export interface Agent {
   id: string;
+  team_id?: string | null;
   name: string;
   description?: string;
   system_prompt: string;
@@ -408,11 +409,53 @@ export const QualityGates = {
     }).then((r) => r.data),
 };
 
+export interface Team {
+  id: string;
+  org_id: string;
+  name: string;
+  role?: "super-admin" | "team-admin" | "developer" | "viewer" | null;
+}
+
+export interface TeamMember {
+  id: string;
+  team_id: string;
+  user_id: string;
+  email?: string | null;
+  role: "team-admin" | "developer" | "viewer";
+}
+
+export interface AuditEntry {
+  id: string;
+  actor_id?: string | null;
+  team_id?: string | null;
+  action: string;
+  target_type: string;
+  target_id: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
+export const Teams = {
+  list: () => api.get<Team[]>("/teams").then((r) => r.data),
+  createOrg: (name: string) => api.post<{ id: string; name: string }>("/orgs", { name }).then((r) => r.data),
+  create: (orgId: string, name: string) => api.post<Team>("/teams", { org_id: orgId, name }).then((r) => r.data),
+  members: (teamId: string) => api.get<TeamMember[]>(`/teams/${teamId}/members`).then((r) => r.data),
+  addMember: (teamId: string, email: string, role: string) =>
+    api.post<TeamMember>(`/teams/${teamId}/members`, { email, role }).then((r) => r.data),
+  setRole: (teamId: string, userId: string, role: string) =>
+    api.patch<TeamMember>(`/teams/${teamId}/members/${userId}`, { role }).then((r) => r.data),
+  removeMember: (teamId: string, userId: string) => api.delete(`/teams/${teamId}/members/${userId}`),
+  audit: (teamId: string, action = "") =>
+    api.get<AuditEntry[]>("/audit", { params: { team_id: teamId, action: action || undefined } }).then((r) => r.data),
+};
+
 export interface User {
   id: string | null;
   email: string | null;
   role: "admin" | "user";
   is_static?: boolean;
+  memberships?: { team_id: string; role: "team-admin" | "developer" | "viewer" }[];
+  permissions?: string[];
 }
 
 export const Auth = {

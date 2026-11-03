@@ -196,6 +196,7 @@ async def create_run(
     run = Run(
         id=str(uuid.uuid4()),
         agent_id=agent_id,
+        team_id=agent.team_id,
         input=payload.input,
         status="running",
         config=json.dumps(config_snapshot),
@@ -251,6 +252,8 @@ async def evaluate_existing_run(
     eval_id = str(uuid.uuid4())
     session.add(EvalCase(
         id=case_id,
+        agent_id=agent_id,
+        team_id=source.team_id,
         dataset=f"run:{run_id}",
         name="source-run",
         input=source.input,
@@ -260,6 +263,7 @@ async def evaluate_existing_run(
     placeholder = EvalRun(
         id=eval_id,
         agent_id=agent_id,
+        team_id=source.team_id,
         dataset=f"run:{run_id}",
         scorer=payload.scorer_name,
         pass_threshold=payload.pass_threshold,

@@ -90,6 +90,11 @@ def test_alembic_upgrade_creates_all_tables(sqlite_file: Path) -> None:
         "gate_policies",
         "gate_runs",
         "gate_bypasses",
+        "organizations",
+        "teams",
+        "memberships",
+        "audit_logs",
+        "approval_requests",
         "alembic_version",
     }
     assert expected.issubset(tables), (
@@ -103,6 +108,7 @@ def test_alembic_upgrade_creates_all_tables(sqlite_file: Path) -> None:
     finally:
         cn.close()
     assert "owner_id" in agent_columns
+    assert "team_id" in agent_columns
     assert "config" in run_columns
     assert "priority" in eval_columns
     assert "request" in eval_columns
@@ -133,6 +139,11 @@ def test_alembic_downgrade_drops_everything(sqlite_file: Path) -> None:
         "gate_policies",
         "gate_runs",
         "gate_bypasses",
+        "organizations",
+        "teams",
+        "memberships",
+        "audit_logs",
+        "approval_requests",
     }
     assert model_tables.isdisjoint(tables), (
         f"still present: {model_tables & tables}"

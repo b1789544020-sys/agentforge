@@ -163,9 +163,12 @@ class MemoryStore:
         if ttl_seconds is not None and ttl_seconds > 0:
             expires_at = datetime.utcnow() + timedelta(seconds=ttl_seconds)
 
+        from app.models import Agent
+        agent = await self.session.get(Agent, self.agent_id) if self.agent_id else None
         row = Memory(
             id=str(uuid.uuid4()),
             agent_id=self.agent_id,
+            team_id=agent.team_id if agent else None,
             session_id=session_id,
             kind=kind,
             content=content,

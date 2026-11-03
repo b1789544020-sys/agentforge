@@ -22,6 +22,7 @@ from app.agent.exporter import (
 )
 from app.agent.memory import MemoryItem, MemoryStore
 from app.agent.versions import create_agent_version
+from app.audit import record_audit
 from app.agent.tools import ToolRegistry
 from app.api.schemas import (
     AgentCreate,
@@ -36,6 +37,7 @@ from app.database import get_session
 from app.dispatch import submit_gate
 from app.gates.service import create_automatic_gates
 from app.models import Agent, Memory
+from app.rbac import accessible_team_ids, agent_scope_condition, resolve_team_for_create
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -46,6 +48,11 @@ def _owner_filter(request: Request) -> str | None:
         return None
     principal = get_principal(request)
     return None if principal.role == "admin" else principal.user_id
+
+
+async def _agent_query_scope(request: Request, session: AsyncSession):
+    teams = await accessible_team_ids(session, request)
+    return agent_scope_condition(teams, get_principal(request).user_id)
 
 
 def _serialize_agent(agent: Agent) -> dict[str, Any]:
@@ -63,6 +70,7 @@ def _serialize_agent(agent: Agent) -> dict[str, Any]:
             config = {}
     return {
         "id": agent.id,
+        "team_id": agent.team_id,
         "name": agent.name,
         "description": agent.description,
         "system_prompt": agent.system_prompt,
@@ -83,9 +91,9 @@ async def list_agents(
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
     stmt = select(Agent).order_by(Agent.created_at.desc())
-    owner_id = _owner_filter(request)
-    if owner_id is not None:
-        stmt = stmt.where(Agent.owner_id == owner_id)
+    scope = await _agent_query_scope(request, session)
+    if scope is not None:
+        stmt = stmt.where(scope)
     rows = (await session.execute(stmt)).scalars().all()
     return [_serialize_agent(a) for a in rows]
 
@@ -95,9 +103,11 @@ async def create_agent(
     payload: AgentCreate, request: Request, background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    team_id = await resolve_team_for_create(request, session, payload.team_id)
     agent = Agent(
         id=str(uuid.uuid4()),
         owner_id=_owner_filter(request),
+        team_id=team_id,
         name=payload.name,
         description=payload.description,
         system_prompt=payload.system_prompt,
@@ -115,6 +125,10 @@ async def create_agent(
     version = await create_agent_version(
         session, agent, created_by=get_principal(request).user_id
     )
+    record_audit(session, request, action="agent.create", target_type="agent",
+                 target_id=agent.id, team_id=agent.team_id,
+                 detail={"version_id": version.id, "name": agent.name})
+
     await session.commit()
     gates = await create_automatic_gates(
         session, version, triggered_by=get_principal(request).user_id
@@ -160,6 +174,9 @@ async def update_agent(
     version = await create_agent_version(
         session, agent, created_by=get_principal(request).user_id
     )
+    record_audit(session, request, action="agent.update", target_type="agent",
+                 target_id=agent.id, team_id=agent.team_id,
+                 detail={"version_id": version.id, "fields": sorted(data)})
     await session.commit()
     gates = await create_automatic_gates(
         session, version, triggered_by=get_principal(request).user_id
@@ -172,11 +189,13 @@ async def update_agent(
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(
-    agent_id: str, session: AsyncSession = Depends(get_session)
+    agent_id: str, request: Request, session: AsyncSession = Depends(get_session)
 ) -> Response:
     agent = await session.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="agent not found")
+    record_audit(session, request, action="agent.delete", target_type="agent",
+                 target_id=agent.id, team_id=agent.team_id, detail={"name": agent.name})
     await session.delete(agent)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -221,11 +240,11 @@ async def export_agents(
     """
     fmt = _resolve_export_format(fmt)
     agent_ids = payload.agent_ids if payload else None
-    owner_id = _owner_filter(request)
+    scope = await _agent_query_scope(request, session)
     if agent_ids is None:
         stmt = select(Agent).order_by(Agent.created_at.desc())
-        if owner_id is not None:
-            stmt = stmt.where(Agent.owner_id == owner_id)
+        if scope is not None:
+            stmt = stmt.where(scope)
         rows = (await session.execute(stmt)).scalars().all()
     else:
         if not agent_ids:
@@ -233,8 +252,8 @@ async def export_agents(
                 status_code=400, detail="agent_ids must be non-empty if provided"
             )
         stmt = select(Agent).where(Agent.id.in_(agent_ids))
-        if owner_id is not None:
-            stmt = stmt.where(Agent.owner_id == owner_id)
+        if scope is not None:
+            stmt = stmt.where(scope)
         rows = (await session.execute(stmt)).scalars().all()
         found = {a.id for a in rows}
         missing = [aid for aid in agent_ids if aid not in found]
@@ -303,12 +322,14 @@ async def import_agents(
     updated: list[str] = []
     skipped: list[str] = []
     owner_id = _owner_filter(request)
+    scope = await _agent_query_scope(request, session)
+    team_id = await resolve_team_for_create(request, session, None)
     versions: list[Any] = []
     for row in rows:
         name = row["name"]
         stmt = select(Agent).where(Agent.name == name)
-        if owner_id is not None:
-            stmt = stmt.where(Agent.owner_id == owner_id)
+        if scope is not None:
+            stmt = stmt.where(scope)
         existing = (await session.execute(stmt)).scalars().first()
         if existing is not None:
             if on_conflict == "skip":
@@ -339,6 +360,7 @@ async def import_agents(
         agent = Agent(
             id=str(uuid.uuid4()),
             owner_id=owner_id,
+            team_id=team_id,
             name=name,
             description=row.get("description"),
             system_prompt=row.get("system_prompt"),

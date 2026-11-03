@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import AgentConfig from "./pages/AgentConfig";
 import AgentRun from "./pages/AgentRun";
@@ -6,12 +6,17 @@ import Evaluation from "./pages/Evaluation";
 import PromptTemplates from "./pages/PromptTemplates";
 import QualityGatePanel from "./pages/QualityGates";
 import LanguageToggle from "./components/LanguageToggle";
+import TeamManagement from "./pages/TeamManagement";
+import { Auth, type User } from "./api/client";
 
-type Tab = "config" | "run" | "eval" | "prompts" | "gates";
+type Tab = "config" | "run" | "eval" | "prompts" | "gates" | "teams";
 
 export default function App() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("config");
+  const [user, setUser] = useState<User | null>(null);
+  useEffect(() => { Auth.me().then(setUser).catch(() => setUser(null)); }, []);
+  const can = (permission: string) => !user || !!user.permissions?.includes("*") || !!user.permissions?.includes(permission);
 
   const TABS: { id: Tab; label: string }[] = [
     { id: "config", label: t("app.tab_config") },
@@ -19,6 +24,7 @@ export default function App() {
     { id: "eval", label: t("app.tab_eval") },
     { id: "prompts", label: t("app.tab_prompts") },
     { id: "gates", label: "质量门禁" },
+    { id: "teams", label: "团队与审计" },
   ];
 
   return (
@@ -46,11 +52,12 @@ export default function App() {
       </nav>
 
       <main>
-        {tab === "config" && <AgentConfig />}
+        {tab === "config" && <AgentConfig canCreate={can("agent:create")} canDelete={can("agent:delete")} />}
         {tab === "run" && <AgentRun />}
         {tab === "eval" && <Evaluation />}
         {tab === "prompts" && <PromptTemplates />}
         {tab === "gates" && <QualityGatePanel />}
+        {tab === "teams" && <TeamManagement permissions={user?.permissions || []} />}
       </main>
     </div>
   );

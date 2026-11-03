@@ -328,6 +328,7 @@ class EvalRunner:
             run_row = EvalRun(
                 id=eval_run_id,
                 agent_id=self.agent.id,
+                team_id=getattr(self.agent, "team_id", None),
                 dataset=dataset_name,
                 total=len(case_records),
                 passed=0,
@@ -357,6 +358,8 @@ class EvalRunner:
         for idx, raw in enumerate(case_records):
             row = EvalCase(
                 id=str(uuid.uuid4()),
+                agent_id=self.agent.id,
+                team_id=getattr(self.agent, "team_id", None),
                 eval_run_id=eval_run_id,
                 dataset=dataset_name,
                 name=f"case-{idx}",
@@ -535,6 +538,7 @@ class EvalRunner:
             run_row = EvalRun(
                 id=eval_run_id,
                 agent_id=self.agent.id,
+                team_id=getattr(self.agent, "team_id", None),
                 dataset=dataset,
                 scorer=scorer.name,
                 pass_threshold=float(threshold),
@@ -755,6 +759,9 @@ class EvalRunner:
                 existing_meta = {}
             result_row = EvalCase(
                 id=str(uuid.uuid4()),
+                agent_id=self.agent.id,
+                team_id=row.team_id or getattr(self.agent, "team_id", None),
+                owner_id=row.owner_id,
                 eval_run_id=eval_run_id,
                 dataset=row.dataset,
                 name=row.name,

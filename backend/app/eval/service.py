@@ -119,7 +119,8 @@ async def execute_eval(eval_run_id: str) -> None:
                         case_id = str(uuid.uuid4())
                         case_ids.append(case_id)
                         session.add(EvalCase(
-                            id=case_id, dataset=row.dataset, name=f"case-{index}",
+                            id=case_id, agent_id=agent.id, owner_id=agent.owner_id, team_id=agent.team_id,
+                            dataset=row.dataset, name=f"case-{index}",
                             input=str(raw.get("input", "")),
                             expected=None if raw.get("expected") is None else str(raw.get("expected")),
                             meta=json.dumps(raw.get("metadata") or {}, ensure_ascii=False), index=index,

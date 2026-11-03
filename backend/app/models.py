@@ -79,6 +79,78 @@ class User(Base):
     )
 
 
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
+class Team(Base):
+    __tablename__ = "teams"
+    __table_args__ = (UniqueConstraint("org_id", "name", name="uq_team_org_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
+class Membership(Base):
+    __tablename__ = "memberships"
+    __table_args__ = (UniqueConstraint("team_id", "user_id", name="uq_membership_team_user"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    team_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(24), nullable=False, default="developer")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
+class AuditLog(Base):
+    """Append-only security and resource audit event."""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    actor_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    ip: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow, index=True)
+
+
+class ApprovalRequest(Base):
+    __tablename__ = "approval_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    team_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    requester_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    resolver_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    resolution_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
@@ -95,6 +167,9 @@ class Agent(Base):
 
     owner_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    team_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -204,6 +279,7 @@ class Memory(Base):
         nullable=False,
         index=True,
     )
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
     content: Mapped[str] = mapped_column(Text, nullable=False)
     kind: Mapped[str] = mapped_column(
@@ -283,6 +359,7 @@ class Run(Base):
         nullable=False,
         index=True,
     )
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
     input: Mapped[str] = mapped_column(Text, nullable=False)
     output: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -445,6 +522,9 @@ class EvalCase(Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=_new_uuid
     )
+    agent_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    owner_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
     # Optional FK to the EvalRun that *owns* this row.  When the case
     # is a "template" (still in the dataset) ``eval_run_id`` is NULL.
@@ -525,6 +605,7 @@ class ToolMetadata(Base):
     # Tool name is the natural primary key.  We do not FK to
     # ``tools.py`` because tools are a Python registry, not a table.
     name: Mapped[str] = mapped_column(String(100), primary_key=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
     # Optional display name (frontend-only).
     display_name: Mapped[Optional[str]] = mapped_column(
@@ -613,6 +694,7 @@ class EvalRun(Base):
         nullable=False,
         index=True,
     )
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
     dataset: Mapped[str] = mapped_column(
         String(100), nullable=False, default="default"
@@ -671,6 +753,7 @@ class AgentVersion(Base):
     agent_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     snapshot: Mapped[str] = mapped_column(Text, nullable=False)
     system_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -824,6 +907,8 @@ _JSON_TEXT_FIELDS: tuple[tuple[type, str], ...] = (
     (GateRun, "failed_case_ids"),
     (GateRun, "details"),
     (GateRun, "diff"),
+    (AuditLog, "detail"),
+    (ApprovalRequest, "payload"),
 )
 
 
@@ -888,7 +973,7 @@ def _protect_agent_version(_mapper: Mapper, _connection: Any, target: AgentVersi
     """Only the mutable gate decision may change after a snapshot is committed."""
     state = sqlalchemy.inspect(target)
     protected = (
-        "agent_id", "version_number", "snapshot", "system_prompt", "model",
+        "agent_id", "team_id", "version_number", "snapshot", "system_prompt", "model",
         "provider", "temperature", "max_steps", "tools", "config", "created_by", "created_at",
     )
     if any(state.attrs[name].history.has_changes() for name in protected):
@@ -904,6 +989,12 @@ def _prevent_agent_version_delete(_mapper: Mapper, _connection: Any, _target: Ag
 @event.listens_for(GateBypass, "before_delete")
 def _protect_gate_bypass(_mapper: Mapper, _connection: Any, _target: GateBypass) -> None:
     raise ValueError("GateBypass audit records are append-only")
+
+
+@event.listens_for(AuditLog, "before_update")
+@event.listens_for(AuditLog, "before_delete")
+def _protect_audit_log(_mapper: Mapper, _connection: Any, _target: AuditLog) -> None:
+    raise ValueError("AuditLog records are append-only")
 
 
 __all__ = [
@@ -938,6 +1029,11 @@ __all__ = [
     "EVAL_STATUS_FAILED",
     # Models
     "Agent",
+    "Organization",
+    "Team",
+    "Membership",
+    "AuditLog",
+    "ApprovalRequest",
     "Memory",
     "Run",
     "Step",

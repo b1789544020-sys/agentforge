@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_principal, require_admin, require_api_token
 from app.database import get_session
 from app.models import User
+from app.rbac import ROLE_PERMISSIONS, memberships
 from app.security import create_access_token, hash_password, verify_password
 
 router = APIRouter(tags=["auth"])
@@ -108,11 +109,18 @@ async def login(
 async def me(request: Request, session: AsyncSession = Depends(get_session)) -> dict:
     principal = get_principal(request)
     if principal.is_static:
-        return {"id": None, "email": None, "role": principal.role, "is_static": True}
+        return {"id": None, "email": None, "role": principal.role, "is_static": True,
+                "memberships": [], "permissions": ["*"]}
     user = await session.get(User, principal.user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="user is inactive or no longer exists")
-    return _user_payload(user)
+    rows = await memberships(session, user.id)
+    permissions = set(ROLE_PERMISSIONS["developer"]) if not rows else set()
+    for row in rows:
+        permissions.update(ROLE_PERMISSIONS.get(row.role, frozenset()))
+    return {**_user_payload(user),
+            "memberships": [{"team_id": row.team_id, "role": row.role} for row in rows],
+            "permissions": sorted(permissions)}
 
 
 @router.get("/admin/users", dependencies=[Depends(require_api_token), Depends(require_admin)])

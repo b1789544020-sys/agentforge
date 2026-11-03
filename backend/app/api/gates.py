@@ -6,15 +6,17 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_principal, require_admin
+from app.audit import record_audit
 from app.api.schemas import EvalSuiteCreate, EvalSuiteUpdate, GateBypassCreate, GatePolicyUpdate, GateTrigger
 from app.database import get_session
 from app.dispatch import submit_gate
 from app.gates.service import create_gate_run, execute_due_gates, reevaluate_gate
 from app.models import Agent, AgentVersion, EvalCase, EvalSuite, GateBypass, GatePolicy, GateRun
+from app.rbac import accessible_team_ids, authorize, eval_case_scope, scoped_agent_ids, team_role
 
 router = APIRouter(tags=["quality-gates"])
 
@@ -32,7 +34,8 @@ def _actor(request: Request) -> str | None:
 
 def version_out(row: AgentVersion) -> dict[str, Any]:
     return {
-        "id": row.id, "agent_id": row.agent_id, "version_number": row.version_number,
+        "id": row.id, "agent_id": row.agent_id, "team_id": row.team_id,
+        "version_number": row.version_number,
         "snapshot": _json(row.snapshot, {}), "system_prompt": row.system_prompt,
         "model": row.model, "provider": row.provider, "temperature": row.temperature,
         "max_steps": row.max_steps, "tools": _json(row.tools, []), "config": _json(row.config, {}),
@@ -63,13 +66,36 @@ def gate_out(row: GateRun) -> dict[str, Any]:
     }
 
 
-async def _validate_cases(session: AsyncSession, case_ids: list[str]) -> None:
+async def _validate_cases(session: AsyncSession, case_ids: list[str], agent: Agent | None = None) -> None:
     if len(set(case_ids)) != len(case_ids):
         raise HTTPException(400, "suite case ids must be unique")
-    found = set((await session.execute(select(EvalCase.id).where(EvalCase.id.in_(case_ids)))).scalars().all())
+    stmt = select(EvalCase.id).where(EvalCase.id.in_(case_ids))
+    if agent is not None:
+        stmt = stmt.where(eval_case_scope(agent))
+    found = set((await session.execute(stmt)).scalars().all())
     missing = [case_id for case_id in case_ids if case_id not in found]
     if missing:
         raise HTTPException(404, {"error": "test cases not found", "missing": missing})
+
+
+async def _suite_access(
+    request: Request, session: AsyncSession, suite: EvalSuite | None, *, write: bool = False,
+) -> EvalSuite:
+    if suite is None:
+        raise HTTPException(404, "suite not found")
+    principal = get_principal(request)
+    if principal.role != "admin":
+        visible = False
+        if suite.team_id:
+            visible = await team_role(session, principal.user_id or "", suite.team_id) is not None
+        elif suite.agent_id:
+            visible = suite.agent_id in (await scoped_agent_ids(session, request) or set())
+        else:
+            visible = suite.owner_id == principal.user_id
+        if not visible:
+            raise HTTPException(404, "suite not found")
+        await authorize(request, session, "gate:trigger" if write else "gate:read", suite.team_id)
+    return suite
 
 
 async def _policy(session: AsyncSession) -> GatePolicy:
@@ -100,18 +126,37 @@ async def get_version(agent_id: str, version_id: str, session: AsyncSession = De
 
 
 @router.get("/suites")
-async def list_suites(agent_id: str | None = None, session: AsyncSession = Depends(get_session)) -> list[dict[str, Any]]:
+async def list_suites(request: Request, agent_id: str | None = None, session: AsyncSession = Depends(get_session)) -> list[dict[str, Any]]:
     stmt = select(EvalSuite).order_by(EvalSuite.created_at.desc())
     if agent_id:
         stmt = stmt.where((EvalSuite.agent_id == agent_id) | EvalSuite.agent_id.is_(None))
+    teams = await accessible_team_ids(session, request)
+    if teams is not None:
+        agent_ids = await scoped_agent_ids(session, request) or set()
+        conditions = []
+        if teams:
+            conditions.append(EvalSuite.team_id.in_(teams))
+        if agent_ids:
+            conditions.append(EvalSuite.agent_id.in_(agent_ids))
+        conditions.append(and_(EvalSuite.team_id.is_(None), EvalSuite.owner_id == get_principal(request).user_id))
+        stmt = stmt.where(or_(*conditions))
     return [suite_out(row) for row in (await session.execute(stmt)).scalars().all()]
 
 
 @router.post("/suites", status_code=201)
 async def create_suite(payload: EvalSuiteCreate, request: Request, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
-    if payload.agent_id and await session.get(Agent, payload.agent_id) is None:
-        raise HTTPException(404, "agent not found")
-    await _validate_cases(session, payload.case_ids)
+    agent: Agent | None = None
+    if payload.agent_id:
+        agent = await session.get(Agent, payload.agent_id)
+        if agent is None:
+            raise HTTPException(404, "agent not found")
+        if get_principal(request).role != "admin":
+            if agent.id not in (await scoped_agent_ids(session, request) or set()):
+                raise HTTPException(404, "agent not found")
+            await authorize(request, session, "gate:trigger", agent.team_id)
+    elif get_principal(request).role != "admin":
+        raise HTTPException(403, "non-admin suites must belong to an agent")
+    await _validate_cases(session, payload.case_ids, agent)
     threshold = payload.pass_threshold
     if threshold is None:
         threshold = (await _policy(session)).default_threshold
@@ -119,32 +164,33 @@ async def create_suite(payload: EvalSuiteCreate, request: Request, session: Asyn
                 if payload.schedule_interval_seconds else None)
     row = EvalSuite(
         name=payload.name, description=payload.description, agent_id=payload.agent_id,
-        owner_id=_actor(request), case_ids=json.dumps(payload.case_ids), pass_threshold=threshold,
+        owner_id=_actor(request), team_id=agent.team_id if agent else None,
+        case_ids=json.dumps(payload.case_ids), pass_threshold=threshold,
         scorer=payload.scorer, enabled=payload.enabled, auto_on_save=payload.auto_on_save,
         schedule_interval_seconds=payload.schedule_interval_seconds, next_run_at=next_run,
     )
     session.add(row)
+    await session.flush()
+    record_audit(session, request, action="suite.create", target_type="eval_suite", target_id=row.id,
+                 team_id=row.team_id, detail={"agent_id": row.agent_id, "name": row.name})
     await session.commit()
     await session.refresh(row)
     return suite_out(row)
 
 
 @router.get("/suites/{suite_id}")
-async def get_suite(suite_id: str, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
-    row = await session.get(EvalSuite, suite_id)
-    if row is None:
-        raise HTTPException(404, "suite not found")
+async def get_suite(suite_id: str, request: Request, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    row = await _suite_access(request, session, await session.get(EvalSuite, suite_id))
     return suite_out(row)
 
 
 @router.patch("/suites/{suite_id}")
-async def update_suite(suite_id: str, payload: EvalSuiteUpdate, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
-    row = await session.get(EvalSuite, suite_id)
-    if row is None:
-        raise HTTPException(404, "suite not found")
+async def update_suite(suite_id: str, payload: EvalSuiteUpdate, request: Request, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    row = await _suite_access(request, session, await session.get(EvalSuite, suite_id), write=True)
     data = payload.model_dump(exclude_unset=True)
     if "case_ids" in data:
-        await _validate_cases(session, data["case_ids"])
+        agent = await session.get(Agent, row.agent_id) if row.agent_id else None
+        await _validate_cases(session, data["case_ids"], agent)
         data["case_ids"] = json.dumps(data.pop("case_ids"))
     if "schedule_interval_seconds" in data:
         interval = data["schedule_interval_seconds"]
@@ -159,9 +205,7 @@ async def update_suite(suite_id: str, payload: EvalSuiteUpdate, session: AsyncSe
 
 @router.post("/suites/{suite_id}/copy", status_code=201)
 async def copy_suite(suite_id: str, request: Request, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
-    source = await session.get(EvalSuite, suite_id)
-    if source is None:
-        raise HTTPException(404, "suite not found")
+    source = await _suite_access(request, session, await session.get(EvalSuite, suite_id), write=True)
     row = EvalSuite(
         name=f"{source.name} (copy)", description=source.description, agent_id=source.agent_id,
         owner_id=_actor(request), team_id=source.team_id, case_ids=source.case_ids,
@@ -175,10 +219,10 @@ async def copy_suite(suite_id: str, request: Request, session: AsyncSession = De
 
 
 @router.delete("/suites/{suite_id}", status_code=204)
-async def delete_suite(suite_id: str, session: AsyncSession = Depends(get_session)) -> None:
-    row = await session.get(EvalSuite, suite_id)
-    if row is None:
-        raise HTTPException(404, "suite not found")
+async def delete_suite(suite_id: str, request: Request, session: AsyncSession = Depends(get_session)) -> None:
+    row = await _suite_access(request, session, await session.get(EvalSuite, suite_id), write=True)
+    record_audit(session, request, action="suite.delete", target_type="eval_suite", target_id=row.id,
+                 team_id=row.team_id, detail={"name": row.name})
     await session.delete(row)
     await session.commit()
 
@@ -255,7 +299,7 @@ async def update_gate_policy(payload: GatePolicyUpdate, session: AsyncSession = 
             "allow_bypass": row.allow_bypass, "notify_to": _json(row.notify_to, []), "updated_at": row.updated_at}
 
 
-@router.post("/agents/{agent_id}/versions/{version_id}/bypass", status_code=201, dependencies=[Depends(require_admin)])
+@router.post("/agents/{agent_id}/versions/{version_id}/bypass", status_code=201)
 async def bypass_gate(
     agent_id: str, version_id: str, payload: GateBypassCreate, request: Request,
     session: AsyncSession = Depends(get_session),
@@ -276,6 +320,10 @@ async def bypass_gate(
     )
     version.gate_status = "bypassed"
     session.add(row)
+    await session.flush()
+    record_audit(session, request, action="gate.override", target_type="gate_bypass", target_id=row.id,
+                 team_id=version.team_id, detail={"agent_version_id": version_id,
+                 "gate_run_id": payload.gate_run_id, "reason": payload.reason})
     await session.commit()
     await session.refresh(row)
     return {"id": row.id, "agent_version_id": row.agent_version_id, "gate_run_id": row.gate_run_id,

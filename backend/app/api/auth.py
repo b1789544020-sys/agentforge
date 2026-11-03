@@ -76,8 +76,8 @@ async def require_agent_access(
     if principal.role == "admin" or agent_id is None:
         return
     agent = await session.get(Agent, agent_id)
-    if agent is None or agent.owner_id != principal.user_id:
-        raise HTTPException(status_code=404, detail="agent not found")
+    from app.rbac import authorize_agent
+    await authorize_agent(request, session, agent)
 
 
 async def require_admin(request: Request) -> None:

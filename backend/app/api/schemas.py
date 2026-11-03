@@ -18,6 +18,7 @@ class OrmModel(BaseModel):
 # ---------------------------------------------------------------------------
 class AgentCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
+    team_id: str | None = None
     description: str | None = None
     system_prompt: str | None = None
     model: str = "gpt-4o-mini"
@@ -42,6 +43,7 @@ class AgentUpdate(BaseModel):
 
 class AgentOut(OrmModel):
     id: str
+    team_id: str | None = None
     name: str
     description: str | None = None
     system_prompt: str | None = None

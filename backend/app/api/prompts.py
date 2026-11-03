@@ -221,7 +221,7 @@ async def compare_template_versions(
         case_id = str(uuid.uuid4())
         case_ids.append(case_id)
         session.add(EvalCase(
-            id=case_id, dataset=f"prompt-compare:{template_id}", name=f"case-{index}",
+            id=case_id, agent_id=agent_id, team_id=agent.team_id, dataset=f"prompt-compare:{template_id}", name=f"case-{index}",
             input=str(raw.get("input", "")),
             expected=None if raw.get("expected") is None else str(raw.get("expected")),
             meta=json.dumps(raw.get("metadata") or {}, ensure_ascii=False), index=index,
