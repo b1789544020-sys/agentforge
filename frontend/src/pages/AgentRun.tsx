@@ -46,9 +46,12 @@ export default function AgentRun() {
   const [activeRun, setActiveRun] = useState<RunDetail | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [evaluationId, setEvaluationId] = useState<string | null>(null);
   const [asyncMode, setAsyncMode] = useState(false);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [newMemory, setNewMemory] = useState("");
+  const [memoryQuery, setMemoryQuery] = useState("");
+  const [memoryMode, setMemoryMode] = useState<"exact" | "semantic" | "hybrid">("hybrid");
   const [memorySaving, setMemorySaving] = useState(false);
 
   // Track the active poll so we can cancel it on unmount or on
@@ -313,6 +316,16 @@ export default function AgentRun() {
     }
   };
 
+  const onEvaluate = async () => {
+    if (!agentId || !activeRun) return;
+    try {
+      const evaluation = await Runs.evaluate(agentId, activeRun.id, { scorer_name: "composite" });
+      setEvaluationId(evaluation.id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const onAddMemory = async () => {
     if (!agentId || !newMemory.trim()) return;
     setMemorySaving(true);
@@ -324,6 +337,17 @@ export default function AgentRun() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setMemorySaving(false);
+    }
+  };
+
+  const onSearchMemory = async () => {
+    if (!agentId) return;
+    try {
+      setMemories(memoryQuery.trim()
+        ? await MemoryApi.search(agentId, memoryQuery.trim(), memoryMode)
+        : await MemoryApi.list(agentId));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -402,9 +426,15 @@ export default function AgentRun() {
                     {t("run.resume")}
                   </button>
                 ) : null}
+                {!["pending", "running", "paused"].includes(activeRun.status) && (
+                  <button onClick={onEvaluate} className="secondary" style={{ marginLeft: "auto" }}>
+                    {t("run.evaluate", { defaultValue: "Evaluate" })}
+                  </button>
+                )}
               </div>
               <div style={{ margin: "12px 0" }}>
                 <TokenGauge used={activeRun.total_tokens} budget={TOKEN_BUDGET} />
+                {evaluationId && <div className="muted">Evaluation: {evaluationId}</div>}
               </div>
               <TraceTree steps={activeRun.trace} />
             </>
@@ -465,6 +495,15 @@ export default function AgentRun() {
           </span>
         </h3>
         <div className="row" style={{ gap: 8, marginBottom: 12 }}>
+          <input value={memoryQuery} onChange={(e) => setMemoryQuery(e.target.value)} placeholder={t("run.memory_search", { defaultValue: "Search memory" })} />
+          <select value={memoryMode} onChange={(e) => setMemoryMode(e.target.value as typeof memoryMode)}>
+            <option value="exact">Text</option>
+            <option value="semantic">Semantic</option>
+            <option value="hybrid">Hybrid</option>
+          </select>
+          <button className="secondary" onClick={onSearchMemory}>{t("run.search", { defaultValue: "Search" })}</button>
+        </div>
+        <div className="row" style={{ gap: 8, marginBottom: 12 }}>
           <input
             type="text"
             value={newMemory}
@@ -498,6 +537,7 @@ export default function AgentRun() {
                   <div className="mem-meta">
                     {t("run.memory_kind")}: {m.kind} ·{" "}
                     {t("run.memory_importance")}: {m.importance.toFixed(2)}
+                    {m.score != null && ` · score: ${m.score.toFixed(3)}`}
                   </div>
                 </div>
                 <button onClick={() => void onDeleteMemory(m.id)} className="danger icon-only" title={t("run.memory_delete")}>

@@ -82,6 +82,8 @@ def test_alembic_upgrade_creates_all_tables(sqlite_file: Path) -> None:
         "eval_cases",
         "eval_runs",
         "tool_metadata",  # 0.1.3 #3 -- plugin layer
+        "prompt_templates",
+        "prompt_versions",
         "alembic_version",
     }
     assert expected.issubset(tables), (
@@ -114,6 +116,8 @@ def test_alembic_downgrade_drops_everything(sqlite_file: Path) -> None:
         "eval_cases",
         "eval_runs",
         "tool_metadata",  # 0.1.3 #3 -- must also be removed on downgrade
+        "prompt_templates",
+        "prompt_versions",
     }
     assert model_tables.isdisjoint(tables), (
         f"still present: {model_tables & tables}"

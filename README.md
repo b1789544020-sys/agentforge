@@ -253,11 +253,12 @@ curl http://localhost:8000/api/v1/agents/<AGENT_ID>/evals/<EVAL_ID> | head -c 40
 | DELETE | `/api/v1/agents/{agent_id}/runs/{run_id}`| 删除一次任务 |
 | POST   | `/api/v1/agents/{agent_id}/runs/{run_id}/pause`  | 暂停任务 |
 | POST   | `/api/v1/agents/{agent_id}/runs/{run_id}/resume` | 恢复任务 |
+| POST   | `/api/v1/agents/{agent_id}/runs/{run_id}/evaluate` | 从原 Run 输入与配置快照创建标准 EvalRun |
 
 ### Memory
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET    | `/api/v1/agents/{agent_id}/memory`            | 查看该 agent 的长期记忆 |
+| GET    | `/api/v1/agents/{agent_id}/memory`            | 查看记忆；支持 `q`、`top_k`、`mode=exact/semantic/hybrid` |
 | POST   | `/api/v1/agents/{agent_id}/memory`            | 写入一条记忆 |
 | DELETE | `/api/v1/agents/{agent_id}/memory`            | 清空该 agent 的记忆 |
 | DELETE | `/api/v1/agents/{agent_id}/memory/{memory_id}`| 删除单条记忆 |
@@ -276,6 +277,14 @@ curl http://localhost:8000/api/v1/agents/<AGENT_ID>/evals/<EVAL_ID> | head -c 40
 | GET    | `/api/v1/agents/{agent_id}/evals/{eval_id}/progress` | 轮询评测进度（`done`/`total`/`passed`/`failed`） |
 | POST   | `/api/v1/agents/{agent_id}/evals/{eval_id}/cancel` | 独立取消一次评测 |
 | DELETE | `/api/v1/agents/{agent_id}/evals/{eval_id}`  | 删除一次评测 |
+
+### Prompt 模板
+- `GET/POST /agents/{agent_id}/prompt-templates`：列出或创建模板（自动产生 v1）。
+- `POST /agents/{agent_id}/prompt-templates/{template_id}/versions`：保存不可变新版本。
+- `POST .../{template_id}/bind`：将指定版本与 `prompt_variables` 绑定到 Agent。
+- `POST .../{template_id}/compare`：两个版本复用同一 EvalRunner、scorer 和 EvalCase 集合进行对比，返回两个 EvalRun 及分数/通过率差值。
+
+Agent 的 `system_prompt` 和模板版本都使用沙箱化 Jinja + StrictUndefined；`config.prompt_variables` 提供变量，`input` 自动注入当前任务。YAML/JSON 导入导出会保留模板字符串与变量配置。
 
 > **已移除的旧端点**：早期 README 里的 `GET /api/v1/runs/{id}`、`GET /api/v1/evals/{id}`、
 > `GET /api/v1/evals/{id}/cases` 都不存在。评测的"每道题"信息现在通过

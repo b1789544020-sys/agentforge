@@ -5,6 +5,7 @@
     "tab_config": "Agent Config",
     "tab_run": "Run",
     "tab_eval": "Evaluation",
+    "tab_prompts": "Prompts",
     "lang_toggle": "中文"
   },
   "config": {

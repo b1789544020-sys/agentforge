@@ -144,9 +144,10 @@ export interface Run {
   agent_id: string;
   input: string;
   output: string;
-  status: "pending" | "running" | "success" | "failed" | "paused";
+  status: "pending" | "running" | "success" | "failed" | "paused" | "cancelled" | "terminated";
   step_count: number;
   total_tokens: number;
+  duration_ms: number;
   started_at: string;
   finished_at?: string;
   error?: string;
@@ -188,6 +189,7 @@ export interface Memory {
   importance: number;
   created_at: string;
   meta: Record<string, unknown>;
+  score?: number | null;
 }
 
 export interface EvalCase {
@@ -264,6 +266,8 @@ export const Runs = {
     api
       .post<RunDetail>(`/agents/${agentId}/runs/${runId}/resume`)
       .then((r) => r.data),
+  evaluate: (agentId: string, runId: string, data: { expected?: string; scorer_name?: string } = {}) =>
+    api.post<EvalRun>(`/agents/${agentId}/runs/${runId}/evaluate`, data).then((r) => r.data),
   /**
    * Open a live-trace WebSocket for ``runId`` (0.1.2 #10).
    *
@@ -282,6 +286,8 @@ export const Runs = {
 export const Memory = {
   list: (agentId: string) =>
     api.get<Memory[]>(`/agents/${agentId}/memory`).then((r) => r.data),
+  search: (agentId: string, q: string, mode: "exact" | "semantic" | "hybrid", topK = 10) =>
+    api.get<Memory[]>(`/agents/${agentId}/memory`, { params: { q, mode, top_k: topK } }).then((r) => r.data),
   add: (
     agentId: string,
     data: { content: string; kind?: string; importance?: number },
@@ -313,4 +319,49 @@ export const Evals = {
   ) => api.post<EvalRun>(`/agents/${agentId}/evals`, data).then((r) => r.data),
   cancel: (agentId: string, evalId: string) =>
     api.post<EvalRun>(`/agents/${agentId}/evals/${evalId}/cancel`).then((r) => r.data),
+};
+
+export interface PromptVersion {
+  id: string;
+  version: number;
+  template: string;
+  created_at: string;
+}
+
+export interface PromptTemplate {
+  id: string;
+  agent_id: string;
+  name: string;
+  description?: string;
+  latest_version: number;
+  versions: PromptVersion[];
+}
+
+export interface PromptComparisonSide {
+  eval_run_id: string;
+  version: number;
+  average_score: number;
+  pass_rate: number;
+  passed: number;
+  total: number;
+}
+
+export const Prompts = {
+  list: (agentId: string) =>
+    api.get<PromptTemplate[]>(`/agents/${agentId}/prompt-templates`).then((r) => r.data),
+  create: (agentId: string, data: { name: string; template: string; description?: string }) =>
+    api.post<PromptTemplate>(`/agents/${agentId}/prompt-templates`, data).then((r) => r.data),
+  addVersion: (agentId: string, templateId: string, template: string) =>
+    api.post<PromptVersion>(`/agents/${agentId}/prompt-templates/${templateId}/versions`, { template }).then((r) => r.data),
+  bind: (agentId: string, templateId: string, version: number | null, variables: Record<string, unknown>) =>
+    api.post(`/agents/${agentId}/prompt-templates/${templateId}/bind`, { version, variables }).then((r) => r.data),
+  compare: (agentId: string, templateId: string, data: {
+    version_a: number; version_b: number; cases: EvalCase[]; scorer_name?: string;
+    variables?: Record<string, unknown>;
+  }) =>
+    api.post<{
+      version_a: PromptComparisonSide;
+      version_b: PromptComparisonSide;
+      delta: { average_score: number; pass_rate: number };
+    }>(`/agents/${agentId}/prompt-templates/${templateId}/compare`, data).then((r) => r.data),
 };

@@ -14,10 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import control
 from app.agent.loop import AgentLoop, LoopConfig, LoopResult
-from app.api.schemas import RunCreate, RunOut, RunSummary
+from app.api.schemas import EvalRunOut, RunCreate, RunEvalCreate, RunOut, RunSummary
 from app.api.ws_broadcaster import broadcaster
 from app.database import async_session_factory, get_session
-from app.models import Agent, Run, Step, RUN_STATUS_PAUSED, RUN_STATUS_RUNNING
+from app.models import Agent, EvalCase, EvalRun, Run, Step, RUN_STATUS_PAUSED, RUN_STATUS_RUNNING
 
 router = APIRouter(prefix="/agents/{agent_id}/runs", tags=["runs"])
 
@@ -225,6 +225,93 @@ async def get_run(
         await session.execute(select(Step).where(Step.run_id == run_id).order_by(Step.index.asc()))
     ).scalars().all()
     return _serialize_run(run, steps)
+
+
+@router.post("/{run_id}/evaluate", response_model=EvalRunOut, status_code=status.HTTP_201_CREATED)
+async def evaluate_existing_run(
+    agent_id: str,
+    run_id: str,
+    payload: RunEvalCreate,
+    background: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Evaluate a run through the same runner, queue, and persistence path."""
+    from app.api.evals import _resolve_scorer, _serialize_run as serialize_eval
+    from app.eval import control as eval_control
+    from app.eval.scorer import EvalScorer
+
+    source = await session.get(Run, run_id)
+    if source is None or source.agent_id != agent_id:
+        raise HTTPException(status_code=404, detail="run not found")
+    if source.status in {"pending", "running", "paused"}:
+        raise HTTPException(status_code=409, detail="run must finish before evaluation")
+    scorer = _resolve_scorer(payload.scorer_name)
+    case_id = str(uuid.uuid4())
+    eval_id = str(uuid.uuid4())
+    session.add(EvalCase(
+        id=case_id,
+        dataset=f"run:{run_id}",
+        name="source-run",
+        input=source.input,
+        expected=None if payload.expected is None else str(payload.expected),
+        meta=json.dumps({"source_run_id": run_id}),
+    ))
+    placeholder = EvalRun(
+        id=eval_id,
+        agent_id=agent_id,
+        dataset=f"run:{run_id}",
+        scorer=payload.scorer_name,
+        pass_threshold=payload.pass_threshold,
+        total=1,
+        status="pending",
+    )
+    session.add(placeholder)
+    await session.commit()
+    cancel_event = eval_control.register(eval_id)
+
+    async def _execute() -> None:
+        from app.eval.runner import EvalRunner
+
+        try:
+            async with async_session_factory() as inner:
+                agent = await inner.get(Agent, agent_id)
+                if agent is None:
+                    return
+                try:
+                    snapshot = json.loads(source.config or "{}")
+                except (TypeError, ValueError):
+                    snapshot = {}
+                eval_agent = Agent(
+                    id=agent.id, name=agent.name, description=agent.description,
+                    system_prompt=agent.system_prompt,
+                    model=snapshot.get("model") or agent.model,
+                    provider=agent.provider,
+                    temperature=snapshot.get("temperature", agent.temperature),
+                    max_steps=snapshot.get("max_steps", agent.max_steps),
+                    tools=agent.tools, config=agent.config,
+                )
+                runner = EvalRunner(
+                    inner, eval_agent,
+                    scorer=None if isinstance(scorer, EvalScorer) else scorer,
+                    pass_threshold=payload.pass_threshold,
+                    max_concurrency=payload.max_concurrency,
+                    session_factory=async_session_factory,
+                    cancel_event=cancel_event,
+                )
+                if isinstance(scorer, EvalScorer):
+                    await runner.run_eval(
+                        [case_id], scorer=scorer, dataset=f"run:{run_id}", eval_run_id=eval_id
+                    )
+                else:
+                    await runner.run(
+                        [{"input": source.input, "expected": payload.expected}],
+                        dataset_name=f"run:{run_id}", eval_run_id=eval_id,
+                    )
+        finally:
+            eval_control.unregister(eval_id)
+
+    background.add_task(_execute)
+    return serialize_eval(placeholder, [])
 
 
 @router.delete("/{run_id}")

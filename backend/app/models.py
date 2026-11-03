@@ -33,6 +33,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     event,
     func,
 )
@@ -126,6 +127,41 @@ class Agent(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Agent id={self.id!r} name={self.name!r} model={self.model!r}>"
+
+
+# ---------------------------------------------------------------------------
+# Prompt templates and immutable versions
+# ---------------------------------------------------------------------------
+
+
+class PromptTemplate(Base):
+    __tablename__ = "prompt_templates"
+    __table_args__ = (UniqueConstraint("agent_id", "name", name="uq_prompt_template_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    agent_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, server_default=func.now()
+    )
+
+
+class PromptVersion(Base):
+    __tablename__ = "prompt_versions"
+    __table_args__ = (UniqueConstraint("template_id", "version", name="uq_prompt_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    template_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("prompt_templates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, server_default=func.now()
+    )
 
 
 # ---------------------------------------------------------------------------

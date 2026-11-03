@@ -18,6 +18,7 @@ from app.agent.exporter import (
     dump as dump_payload,
     load as load_payload,
 )
+from app.agent.memory import MemoryItem, MemoryStore
 from app.agent.tools import ToolRegistry
 from app.api.schemas import (
     AgentCreate,
@@ -370,27 +371,44 @@ def list_tools() -> list[dict[str, Any]]:
 memory_router = APIRouter(prefix="/agents/{agent_id}/memory", tags=["memory"])
 
 
+def _memory_payload(item: MemoryItem, agent_id: str, score: float | None = None) -> dict[str, Any]:
+    meta = item.meta
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (TypeError, ValueError):
+            meta = {}
+    return {
+        "id": item.id,
+        "agent_id": agent_id,
+        "content": item.content,
+        "kind": item.kind,
+        "importance": item.importance,
+        "created_at": item.created_at,
+        "meta": meta if isinstance(meta, dict) else {},
+        "score": score,
+    }
+
+
 @memory_router.get("", response_model=list[MemoryOut])
 async def list_memory(
-    agent_id: str, session: AsyncSession = Depends(get_session)
+    agent_id: str,
+    q: str | None = Query(default=None),
+    query: str | None = Query(default=None),
+    top_k: int = Query(default=50, ge=1, le=100),
+    mode: str = Query(default="exact"),
+    session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    rows = (
-        await session.execute(
-            select(Memory).where(Memory.agent_id == agent_id).order_by(Memory.created_at.desc())
-        )
-    ).scalars().all()
-    return [
-        {
-            "id": m.id,
-            "agent_id": m.agent_id,
-            "content": m.content,
-            "kind": m.kind,
-            "importance": m.importance,
-            "created_at": m.created_at,
-            "meta": json.loads(m.meta) if m.meta else {},
-        }
-        for m in rows
-    ]
+    store = MemoryStore(session, agent_id=agent_id)
+    text = q if q is not None else query
+    if text is None or not text.strip():
+        rows = await store.list(limit=top_k)
+        return [_memory_payload(item, agent_id) for item in rows]
+    aliases = {"text": "exact", "semantic": "embed", "embed": "embed", "exact": "exact", "hybrid": "hybrid"}
+    if mode not in aliases:
+        raise HTTPException(status_code=400, detail="mode must be exact, semantic/embed, or hybrid")
+    hits = await store.search(text, limit=top_k, mode=aliases[mode])
+    return [_memory_payload(item, agent_id, score) for item, score in hits]
 
 
 @memory_router.post("", response_model=MemoryOut, status_code=status.HTTP_201_CREATED)
@@ -402,27 +420,13 @@ async def add_memory(
     agent = await session.get(Agent, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="agent not found")
-    mem = Memory(
-        id=str(uuid.uuid4()),
-        agent_id=agent_id,
+    item = await MemoryStore(session, agent_id=agent_id).add(
+        payload.content,
         kind=payload.kind,
-        content=payload.content,
         importance=payload.importance,
-        meta=json.dumps(payload.metadata, ensure_ascii=False),
-        created_at=datetime.utcnow(),
+        meta=payload.metadata,
     )
-    session.add(mem)
-    await session.commit()
-    await session.refresh(mem)
-    return {
-        "id": mem.id,
-        "agent_id": mem.agent_id,
-        "content": mem.content,
-        "kind": mem.kind,
-        "importance": mem.importance,
-        "created_at": mem.created_at,
-        "meta": json.loads(mem.meta) if mem.meta else {},
-    }
+    return _memory_payload(item, agent_id)
 
 
 @memory_router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -434,6 +438,5 @@ async def delete_memory(
     mem = await session.get(Memory, memory_id)
     if not mem or mem.agent_id != agent_id:
         raise HTTPException(status_code=404, detail="memory not found")
-    await session.delete(mem)
-    await session.commit()
+    await MemoryStore(session, agent_id=agent_id).delete(memory_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

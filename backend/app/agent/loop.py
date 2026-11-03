@@ -763,7 +763,7 @@ class AgentLoop:
             status = STATE_RUNNING
             error: Optional[str] = None
         else:
-            context = self._injected_context or self._build_context(user_input)
+            context = self._injected_context or await self._build_context(user_input)
             start_step = 1  # 1-based: first user-visible step is #1
             consecutive_errors = 0
             total_prompt = 0
@@ -1122,14 +1122,17 @@ class AgentLoop:
         await _commit_with_retry(self.session)
         return run
 
-    def _build_context(self, user_input: str) -> Context:
+    async def _build_context(self, user_input: str) -> Context:
         max_tokens = int(self._agent_config.get("max_context_tokens", 8000))
         ctx = Context(
             max_tokens=max_tokens,
             model=self.agent.model or "gpt-4o-mini",
         )
-        if self.agent.system_prompt:
-            ctx.add("system", self.agent.system_prompt)
+        from app.prompting import resolve_system_prompt
+
+        system_prompt = await resolve_system_prompt(self.session, self.agent, user_input)
+        if system_prompt:
+            ctx.add("system", system_prompt)
         ctx.add("user", user_input)
         return ctx
 

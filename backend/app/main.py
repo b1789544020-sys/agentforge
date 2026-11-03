@@ -15,6 +15,7 @@ from app.api.agents import (
     tools_router,
 )
 from app.api.evals import router as evals_router
+from app.api.prompts import router as prompts_router
 from app.api.runs import router as runs_router
 from app.api.tools_metadata import router as tools_metadata_router
 from app.api.ws import router as ws_router
@@ -99,6 +100,7 @@ def create_app() -> FastAPI:
         (memory_router, "memory"),
         (tools_router, "tools"),
         (tools_metadata_router, "tools"),
+        (prompts_router, "prompts"),
     )
     for api_router, tag in http_routers:
         for prefix in (settings.api_prefix, "/api"):

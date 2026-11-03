@@ -67,6 +67,13 @@ class RunCreate(BaseModel):
     async_run: bool = False
 
 
+class RunEvalCreate(BaseModel):
+    expected: Any | None = None
+    scorer_name: str = "composite"
+    pass_threshold: float = 0.7
+    max_concurrency: int = 1
+
+
 class StepOut(OrmModel):
     id: str
     index: int
@@ -283,6 +290,7 @@ class MemoryOut(OrmModel):
     importance: float
     created_at: datetime | None = None
     meta: dict[str, Any] = Field(default_factory=dict)
+    score: float | None = None
 
 
 # ---------------------------------------------------------------------------

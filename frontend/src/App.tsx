@@ -3,9 +3,10 @@ import { useTranslation } from "react-i18next";
 import AgentConfig from "./pages/AgentConfig";
 import AgentRun from "./pages/AgentRun";
 import Evaluation from "./pages/Evaluation";
+import PromptTemplates from "./pages/PromptTemplates";
 import LanguageToggle from "./components/LanguageToggle";
 
-type Tab = "config" | "run" | "eval";
+type Tab = "config" | "run" | "eval" | "prompts";
 
 export default function App() {
   const { t } = useTranslation();
@@ -15,6 +16,7 @@ export default function App() {
     { id: "config", label: t("app.tab_config") },
     { id: "run", label: t("app.tab_run") },
     { id: "eval", label: t("app.tab_eval") },
+    { id: "prompts", label: t("app.tab_prompts") },
   ];
 
   return (
@@ -45,6 +47,7 @@ export default function App() {
         {tab === "config" && <AgentConfig />}
         {tab === "run" && <AgentRun />}
         {tab === "eval" && <Evaluation />}
+        {tab === "prompts" && <PromptTemplates />}
       </main>
     </div>
   );
