@@ -38,6 +38,7 @@ from app.dispatch import submit_gate
 from app.gates.service import create_automatic_gates
 from app.models import Agent, Memory
 from app.rbac import accessible_team_ids, agent_scope_condition, resolve_team_for_create
+from app.secrets import protect_config, redact_config
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -68,6 +69,7 @@ def _serialize_agent(agent: Agent) -> dict[str, Any]:
             config = json.loads(agent.config)
         except (TypeError, ValueError):
             config = {}
+    config = redact_config(config)
     return {
         "id": agent.id,
         "team_id": agent.team_id,
@@ -116,7 +118,7 @@ async def create_agent(
         temperature=payload.temperature,
         max_steps=payload.max_steps,
         tools=json.dumps(payload.tools, ensure_ascii=False),
-        config=json.dumps(payload.config, ensure_ascii=False),
+        config=json.dumps(protect_config(payload.config), ensure_ascii=False),
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
@@ -165,7 +167,9 @@ async def update_agent(
         agent.tools = json.dumps(data["tools"], ensure_ascii=False)
         data.pop("tools")
     if "config" in data and data["config"] is not None:
-        agent.config = json.dumps(data["config"], ensure_ascii=False)
+        agent.config = json.dumps(
+            protect_config(data["config"], json.loads(agent.config or "{}")), ensure_ascii=False
+        )
         data.pop("config")
     for k, v in data.items():
         setattr(agent, k, v)
@@ -348,7 +352,10 @@ async def import_agents(
             existing.temperature = row.get("temperature", existing.temperature)
             existing.max_steps = row.get("max_steps", existing.max_steps)
             existing.tools = json.dumps(row.get("tools") or [], ensure_ascii=False)
-            existing.config = json.dumps(row.get("config") or {}, ensure_ascii=False)
+            existing.config = json.dumps(
+                protect_config(row.get("config") or {}, json.loads(existing.config or "{}")),
+                ensure_ascii=False,
+            )
             existing.updated_at = datetime.utcnow()
             await session.flush()
             versions.append(await create_agent_version(
@@ -373,7 +380,7 @@ async def import_agents(
             ),
             max_steps=row.get("max_steps") or 20,
             tools=json.dumps(row.get("tools") or [], ensure_ascii=False),
-            config=json.dumps(row.get("config") or {}, ensure_ascii=False),
+            config=json.dumps(protect_config(row.get("config") or {}), ensure_ascii=False),
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )

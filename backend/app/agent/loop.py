@@ -688,16 +688,33 @@ class AgentLoop:
 
         provider = (self.agent.provider or "openai").lower()
         env_provider = (os.environ.get("AGENTFORGE_LLM_PROVIDER") or "").lower()
+        from app.secrets import reveal_config
+        agent_config = reveal_config(_safe_json_loads(getattr(self.agent, "config", "{}"), {}))
 
         # ---- (1) explicit mock ------------------------------------------------
         if provider == "mock" or env_provider == "mock":
             return MockLLMClient(
                 model=self.agent.model or self.settings.openai_default_model or "mock-model",
-                reply=str(_safe_json_loads(self.agent.config, {}).get("mock_reply") or "Mock response (no upstream call)."),
-                replies=_safe_json_loads(self.agent.config, {}).get("mock_replies") or {},
+                reply=str(agent_config.get("mock_reply") or "Mock response (no upstream call)."),
+                replies=agent_config.get("mock_replies") or {},
             )
 
-        # ---- (2) any non-mock provider with no key → mock ---------------------
+        # ---- (2) explicit local/OpenAI-compatible inference -------------------
+        if provider in {"ollama", "vllm", "local", "openai-compatible", "openai_compatible"}:
+            default_urls = {
+                "ollama": os.environ.get("AGENTFORGE_OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+                "vllm": os.environ.get("AGENTFORGE_VLLM_BASE_URL", "http://localhost:8001/v1"),
+            }
+            base_url = agent_config.get("base_url") or agent_config.get("endpoint") or default_urls.get(provider)
+            if not base_url:
+                raise ValueError(f"{provider} requires config.base_url (the /v1 root)")
+            return make_client(
+                provider=f"{provider}-local", api_key=str(agent_config.get("api_key") or "local-not-required"),
+                model=self.agent.model, base_url=str(base_url).rstrip("/"),
+                timeout=float(self.settings.request_timeout_seconds), max_retries=self.settings.max_retries,
+            )
+
+        # ---- (3) any non-mock provider with no key → mock ---------------------
         # Avoids accidentally shipping a "placeholder" bearer that would 401.
         if provider == "anthropic":
             api_key = self.settings.anthropic_api_key

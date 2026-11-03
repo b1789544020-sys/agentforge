@@ -1,0 +1,10 @@
+services:
+  migrate: { pull_policy: never }
+  agentforge-api: { pull_policy: never }
+  agentforge-frontend: { pull_policy: never }
+  sandbox: { pull_policy: never }
+  redis: { pull_policy: never }
+  celery-worker: { pull_policy: never }
+  celery-beat: { pull_policy: never }
+  postgres: { pull_policy: never }
+  qdrant: { pull_policy: never }

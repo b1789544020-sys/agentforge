@@ -153,6 +153,7 @@ class Settings(BaseSettings):
 
     # ---- Auth --------------------------------------------------------
     secret_key: str = "change-me-in-production-please"
+    encryption_key: str | None = None
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24
 

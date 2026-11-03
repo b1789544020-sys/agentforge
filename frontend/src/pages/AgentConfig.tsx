@@ -14,6 +14,9 @@ export default function AgentConfig({ canCreate = true, canDelete = true }: { ca
   const [systemPrompt, setSystemPrompt] = useState("You are a helpful assistant.");
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [model, setModel] = useState("gpt-4o-mini");
+  const [provider, setProvider] = useState("openai");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
 
@@ -48,9 +51,16 @@ export default function AgentConfig({ canCreate = true, canDelete = true }: { ca
         system_prompt: systemPrompt,
         tools: selectedTools,
         model,
+        provider,
+        config: {
+          ...((["ollama", "vllm", "local", "openai-compatible"].includes(provider) && baseUrl.trim())
+            ? { base_url: baseUrl.trim() } : {}),
+          ...(apiKey ? { api_key: apiKey } : {}),
+        },
       });
       setName("");
       setDescription("");
+      setApiKey("");
     } catch {
       // store already exposes `error`; keep the form open so the user can retry.
     } finally {
@@ -92,15 +102,22 @@ export default function AgentConfig({ canCreate = true, canDelete = true }: { ca
               placeholder={t("config.description_placeholder", { defaultValue: "Short description" })}
             />
           </label>
-          <label>
-            {t("config.model")}
-            <select value={model} onChange={(e) => setModel(e.target.value)}>
-              <option value="gpt-4o-mini">gpt-4o-mini</option>
-              <option value="gpt-4o">gpt-4o</option>
-              <option value="gpt-4.1">gpt-4.1</option>
-              <option value="claude-3-5-sonnet">claude-3-5-sonnet</option>
+          <label>Provider
+            <select value={provider} onChange={(event) => setProvider(event.target.value)}>
+              {(["openai", "mock", "ollama", "vllm", "openai-compatible", "deepseek", "qwen", "kimi", "glm", "doubao", "anthropic"]).map((item) =>
+                <option key={item} value={item}>{item}</option>)}
             </select>
           </label>
+          <label>
+            {t("config.model")}
+            <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="gpt-4o-mini / qwen2.5:3b" />
+          </label>
+          {["ollama", "vllm", "local", "openai-compatible"].includes(provider) && <label>本地 / 兼容 endpoint（/v1）
+            <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="http://localhost:11434/v1" />
+          </label>}
+          {provider !== "mock" && <label>API key（可选，落库加密）
+            <input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
+          </label>}
           <label>
             {t("config.system_prompt")}
             <textarea

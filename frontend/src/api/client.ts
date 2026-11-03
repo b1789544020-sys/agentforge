@@ -101,6 +101,8 @@ export interface Agent {
   system_prompt: string;
   tools: string[];
   model: string;
+  provider?: string;
+  config?: Record<string, unknown>;
   created_at: string;
 }
 

@@ -87,7 +87,8 @@ def agent_to_dict(agent: Any) -> dict[str, Any]:
         else:
             out[field] = getattr(agent, field, None)
     out["tools"] = list(tools) if tools else []
-    out["config"] = dict(config) if config else {}
+    from app.secrets import redact_config
+    out["config"] = redact_config(dict(config)) if config else {}
     return out
 
 
