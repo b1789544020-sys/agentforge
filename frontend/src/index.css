@@ -228,6 +228,16 @@ input[type="checkbox"] {
   vertical-align: middle;
 }
 
+/* Operations dashboard */
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: var(--s-3); margin: var(--s-4) 0; }
+.metric-grid div { display: flex; flex-direction: column; padding: var(--s-3); background: var(--panel-2); border-radius: var(--r-md); }
+.metric-grid strong { font-size: 20px; }
+.metric-grid span { color: var(--muted); font-size: 12px; }
+.trend { display: flex; align-items: flex-end; gap: var(--s-2); height: 150px; border-bottom: 1px solid var(--border); padding-top: var(--s-4); }
+.trend-item { flex: 1; min-width: 20px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+.trend-bar { width: 70%; min-height: 4px; background: linear-gradient(var(--accent-2), var(--accent)); border-radius: var(--r-sm) var(--r-sm) 0 0; }
+.trend-item small { color: var(--muted); margin-top: var(--s-2); font-size: 10px; }
+
 /* Quality gate panel */
 .gate-layout { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: var(--s-4); margin: var(--s-4) 0; }
 .suite-row { display: flex; width: 100%; text-align: left; flex-direction: column; align-items: flex-start; margin-bottom: var(--s-2); }

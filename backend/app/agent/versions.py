@@ -70,7 +70,7 @@ def agent_from_version(version: AgentVersion) -> Agent:
     snapshot = _object(version.snapshot, {})
     if not isinstance(snapshot, dict) or not snapshot:
         raise ValueError("agent version snapshot is missing or invalid")
-    return Agent(
+    agent = Agent(
         id=version.agent_id,
         team_id=version.team_id or snapshot.get("team_id"),
         name=str(snapshot.get("name") or f"agent-{version.agent_id[:8]}"),
@@ -83,6 +83,8 @@ def agent_from_version(version: AgentVersion) -> Agent:
         tools=json.dumps(snapshot.get("tools") or [], ensure_ascii=False),
         config=json.dumps(snapshot.get("config") or {}, ensure_ascii=False),
     )
+    agent._agent_version_id = version.id
+    return agent
 
 
 __all__ = ["runtime_snapshot", "create_agent_version", "agent_from_version"]

@@ -17,6 +17,7 @@ from app.api.agents import (
 )
 from app.api.evals import router as evals_router
 from app.api.gates import router as gates_router
+from app.api.operations import router as operations_router
 from app.api.prompts import router as prompts_router
 from app.api.runs import router as runs_router
 from app.api.teams import router as teams_router
@@ -125,6 +126,7 @@ def create_app() -> FastAPI:
         (evals_router, "evals"),
         (gates_router, "quality-gates"),
         (teams_router, "teams"),
+        (operations_router, "operations"),
         (memory_router, "memory"),
         (tools_router, "tools"),
         (tools_metadata_router, "tools"),

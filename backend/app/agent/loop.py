@@ -1167,6 +1167,7 @@ class AgentLoop:
             id=run_id or str(uuid.uuid4()),
             agent_id=self.agent.id,
             team_id=getattr(self.agent, "team_id", None),
+            agent_version_id=getattr(self.agent, "_agent_version_id", None),
             input=user_input,
             status=RUN_STATUS_RUNNING,
             started_at=datetime.utcnow(),

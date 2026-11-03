@@ -411,6 +411,73 @@ export const QualityGates = {
     }).then((r) => r.data),
 };
 
+export interface MetricSummary {
+  requests: number;
+  success: number;
+  failed: number;
+  rejected: number;
+  failure_rate: number;
+  total_tokens: number;
+  average_duration_ms: number;
+  p95_duration_ms: number;
+}
+
+export interface MetricsResponse {
+  summary: MetricSummary;
+  trends: ({ bucket: string } & MetricSummary)[];
+  dimensions: Record<string, Record<string, MetricSummary>>;
+}
+
+export interface CostResponse {
+  total: number;
+  currency: string;
+  unpriced_tokens: number;
+  top_agents: { agent_id: string; cost: number }[];
+  models: { model: string; cost: number }[];
+  trends: { bucket: string; cost: number }[];
+}
+
+export interface FeedbackItem {
+  id: string;
+  run_id: string;
+  rating: "positive" | "negative";
+  expected_answer?: string | null;
+  context_snapshot: { input?: string; output?: string; agent_version_id?: string };
+  eval_case_id?: string | null;
+}
+
+export interface AlertRule {
+  id: string;
+  name: string;
+  kind: "failure_rate" | "daily_cost" | "error_spike" | "gate_failures";
+  threshold: number;
+  enabled: boolean;
+}
+
+export interface AlertEvent {
+  id: string;
+  rule_id: string;
+  status: "open" | "acknowledged";
+  message: string;
+  created_at: string;
+}
+
+export const Operations = {
+  metrics: (params: Record<string, string>) =>
+    api.get<MetricsResponse>("/operations/metrics", { params }).then((r) => r.data),
+  cost: (params: Record<string, string>) =>
+    api.get<CostResponse>("/operations/cost", { params }).then((r) => r.data),
+  feedback: () => api.get<FeedbackItem[]>("/operations/feedback", { params: { rating: "negative" } }).then((r) => r.data),
+  convertFeedback: (id: string, expectedAnswer: string, suiteId?: string) =>
+    api.post(`/operations/feedback/${id}/convert`, { expected_answer: expectedAnswer, suite_id: suiteId || null }),
+  rules: () => api.get<AlertRule[]>("/operations/alerts/rules").then((r) => r.data),
+  createRule: (data: { name: string; kind: string; threshold: number }) =>
+    api.post<AlertRule>("/operations/alerts/rules", data).then((r) => r.data),
+  events: () => api.get<AlertEvent[]>("/operations/alerts/events").then((r) => r.data),
+  evaluate: () => api.post("/operations/alerts/evaluate").then((r) => r.data),
+  acknowledge: (id: string) => api.post<AlertEvent>(`/operations/alerts/events/${id}/ack`).then((r) => r.data),
+};
+
 export interface Team {
   id: string;
   org_id: string;

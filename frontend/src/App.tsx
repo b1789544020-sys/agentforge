@@ -7,9 +7,10 @@ import PromptTemplates from "./pages/PromptTemplates";
 import QualityGatePanel from "./pages/QualityGates";
 import LanguageToggle from "./components/LanguageToggle";
 import TeamManagement from "./pages/TeamManagement";
+import OperationsPage from "./pages/Operations";
 import { Auth, type User } from "./api/client";
 
-type Tab = "config" | "run" | "eval" | "prompts" | "gates" | "teams";
+type Tab = "config" | "run" | "eval" | "prompts" | "gates" | "teams" | "operations";
 
 export default function App() {
   const { t } = useTranslation();
@@ -25,6 +26,7 @@ export default function App() {
     { id: "prompts", label: t("app.tab_prompts") },
     { id: "gates", label: "质量门禁" },
     { id: "teams", label: "团队与审计" },
+    { id: "operations", label: "运营与成本" },
   ];
 
   return (
@@ -58,6 +60,7 @@ export default function App() {
         {tab === "prompts" && <PromptTemplates />}
         {tab === "gates" && <QualityGatePanel />}
         {tab === "teams" && <TeamManagement permissions={user?.permissions || []} />}
+        {tab === "operations" && <OperationsPage permissions={user?.permissions || []} />}
       </main>
     </div>
   );

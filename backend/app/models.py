@@ -360,6 +360,9 @@ class Run(Base):
         index=True,
     )
     team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    agent_version_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("agent_versions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     input: Mapped[str] = mapped_column(Text, nullable=False)
     output: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -870,6 +873,72 @@ class GateBypass(Base):
     )
 
 
+class ModelPrice(Base):
+    """Append-only provider/model token price effective from a UTC timestamp."""
+
+    __tablename__ = "model_prices"
+    __table_args__ = (
+        UniqueConstraint("provider", "model", "effective_from", name="uq_model_price_effective"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    input_per_million: Mapped[float] = mapped_column(Float, nullable=False)
+    output_per_million: Mapped[float] = mapped_column(Float, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")
+    effective_from: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
+class Feedback(Base):
+    __tablename__ = "feedback"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    agent_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    rating: Mapped[str] = mapped_column(String(16), nullable=False)
+    expected_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    context_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    eval_case_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    suite_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
+class AlertRule(Base):
+    __tablename__ = "alert_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
+class AlertEvent(Base):
+    __tablename__ = "alert_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    rule_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("alert_rules.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open", index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow, index=True)
+    acknowledged_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    acknowledged_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 # ---------------------------------------------------------------------------
 # JSON-Text auto-serialisation
 # ---------------------------------------------------------------------------
@@ -909,6 +978,8 @@ _JSON_TEXT_FIELDS: tuple[tuple[type, str], ...] = (
     (GateRun, "diff"),
     (AuditLog, "detail"),
     (ApprovalRequest, "payload"),
+    (Feedback, "context_snapshot"),
+    (AlertEvent, "detail"),
 )
 
 
@@ -1034,6 +1105,10 @@ __all__ = [
     "Membership",
     "AuditLog",
     "ApprovalRequest",
+    "ModelPrice",
+    "Feedback",
+    "AlertRule",
+    "AlertEvent",
     "Memory",
     "Run",
     "Step",

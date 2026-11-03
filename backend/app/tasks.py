@@ -28,6 +28,7 @@ celery_app.conf.update(
         "memory-ttl-cleanup": {"task": "agentforge.memory_cleanup", "schedule": 300.0},
         "stuck-run-watchdog": {"task": "agentforge.stuck_watchdog", "schedule": 60.0},
         "quality-gate-scheduler": {"task": "agentforge.scheduled_gates", "schedule": 60.0},
+        "operations-alert-evaluator": {"task": "agentforge.operations_alerts", "schedule": 60.0},
     },
 )
 
@@ -137,6 +138,18 @@ def execute_gate_task(gate_run_id: str) -> None:
 def scheduled_gates_task() -> None:
     from app.gates.service import execute_due_gates
     asyncio.run(execute_due_gates())
+
+
+@celery_app.task(name="agentforge.operations_alerts")
+def operations_alerts_task() -> None:
+    from app.database import async_session_factory
+    from app.operations import evaluate_alert_rules
+
+    async def evaluate() -> None:
+        async with async_session_factory() as session:
+            await evaluate_alert_rules(session)
+
+    asyncio.run(evaluate())
 
 
 @celery_app.task(name="agentforge.memory_cleanup")

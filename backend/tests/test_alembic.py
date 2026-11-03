@@ -95,6 +95,10 @@ def test_alembic_upgrade_creates_all_tables(sqlite_file: Path) -> None:
         "memberships",
         "audit_logs",
         "approval_requests",
+        "model_prices",
+        "feedback",
+        "alert_rules",
+        "alert_events",
         "alembic_version",
     }
     assert expected.issubset(tables), (
@@ -144,6 +148,10 @@ def test_alembic_downgrade_drops_everything(sqlite_file: Path) -> None:
         "memberships",
         "audit_logs",
         "approval_requests",
+        "model_prices",
+        "feedback",
+        "alert_rules",
+        "alert_events",
     }
     assert model_tables.isdisjoint(tables), (
         f"still present: {model_tables & tables}"

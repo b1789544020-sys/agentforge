@@ -18,7 +18,7 @@ from app.api.schemas import EvalRunOut, RunCreate, RunEvalCreate, RunOut, RunSum
 from app.api.ws_broadcaster import broadcaster
 from app.database import async_session_factory, get_session
 from app.dispatch import submit_eval, submit_resume, submit_run
-from app.models import Agent, EvalCase, EvalRun, Run, Step, RUN_STATUS_PAUSED, RUN_STATUS_RUNNING
+from app.models import Agent, AgentVersion, EvalCase, EvalRun, Run, Step, RUN_STATUS_PAUSED, RUN_STATUS_RUNNING
 
 router = APIRouter(prefix="/agents/{agent_id}/runs", tags=["runs"])
 
@@ -197,6 +197,10 @@ async def create_run(
         id=str(uuid.uuid4()),
         agent_id=agent_id,
         team_id=agent.team_id,
+        agent_version_id=await session.scalar(
+            select(AgentVersion.id).where(AgentVersion.agent_id == agent_id)
+            .order_by(AgentVersion.version_number.desc()).limit(1)
+        ),
         input=payload.input,
         status="running",
         config=json.dumps(config_snapshot),
