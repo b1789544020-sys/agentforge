@@ -148,6 +148,7 @@ agentforge/
    ```bash
    docker compose up --build
    ```
+   默认启动 API、前端、PostgreSQL、沙箱模板和可选 ChromaDB 服务。当前环境若未安装 Docker，请先完成本地开发验证，不要把配置检查当作容器验收。
 3. 打开浏览器：
    - 前端：http://localhost:5173
    - API 文档：http://localhost:8000/docs
@@ -218,8 +219,12 @@ curl http://localhost:8000/api/v1/agents/<AGENT_ID>/evals/<EVAL_ID> | head -c 40
 | `AGENTFORGE_SANDBOX_IMAGE` | `agentforge-sandbox` | `docker` 模式下的镜像名 |
 | `AGENTFORGE_VECTOR_BACKEND` | 占位字段 | 未起作用；预留作未来换 ChromaDB |
 | `AGENTFORGE_VECTOR_URL` | 占位字段 | 同上 |
+| `AGENTFORGE_API_TOKEN` | 空 | 非空时所有 API（健康检查除外）要求 `X-API-Key` 或 Bearer token；前端设同样的 `VITE_API_TOKEN` |
+| `AGENTFORGE_ENABLE_DANGEROUS_TOOLS` | `false` | 总开关：默认拒绝 shell、文件、HTTP 和高风险工具 |
+| `AGENTFORGE_FILE_ALLOWED_DIRS` | `[]` | JSON 数组；文件工具只能访问这些目录及其子目录 |
+| `AGENTFORGE_HTTP_ALLOWED_HOSTS` | `[]` | JSON 数组；HTTP 工具只允许这些主机，支持 `*.example.com` |
 
-> **为什么是占位字段？** 因为记忆检索现在跑在进程内的余弦上（只看本地 SQLite），没有任何外部 vector service 可连。要换成 ChromaDB 或 pgvector，只需重写 `backend/app/agent/memory.py` 里的 `_search_embed()`。
+> **安全边界**：风险标签也会参与执行拦截。开启危险工具并不等于完成安全隔离；尤其是宿主 `shell_exec`，不能暴露给不可信用户。WebSocket 通过子协议头携带 token，不把长期 token 放进 URL。Docker Compose 默认使用 PostgreSQL；本地非 Docker 开发仍默认 SQLite。
 
 ---
 
@@ -496,3 +501,104 @@ PR 欢迎！主要思路：
 AgentForge 受以下项目启发：FastAPI · SQLAlchemy · React · Vite · Zustand · Pydantic · OpenAI Python SDK · Anthropic Python SDK · aiosqlite。
 
 **反馈 / 报告 bug**：走 [GitHub Issues](https://github.com/yourname/agentforge/issues) 。
+你是我最信任的代码执行者，落地速度极快、改得稳。方向、优先级、验收标准由我来定，你专注把每一步改对、改稳、跑通验证。下面这份工作令已经帮你把路铺到「文件:行号」级别，你照做即可，不要花时间重新规划方向。
+
+总目标：把 AgentForge 从「单人可信本地的调试台」，改造成「provider 无关、观测/评测/记忆三者闭环的自托管 Agent 团队工作台」——既真有独特价值，又真能被做出来。
+
+执行方式：按阶段 0 → 5 顺序一路做完，不要中途停下等我。每个阶段做完，跑测试 + 提交 git + 输出一段「阶段小结」，然后继续下一阶段。全部完成后，交回一份总交付清单。
+
+一、贯穿全程的执行纪律（铁律，每条都守）
+提交粒度：每完成一个阶段，git commit 一次，commit message 写「阶段 N：简述」。
+验证优先：每改一处涉及执行正确性的逻辑，必须补一条对应的测试，先测失败、改后测通过。禁止只改代码不补测试。
+不扩大范围：只做本工作令明确列出的项。如果你在改的过程中发现新的问题，记录下来，在阶段小结里单独列出，不要擅自顺手改掉。
+不改测试语义去迁就代码：测试必须断言真实期望，不是让测试恰好通过。
+全程不碰源码以外的副作用：最终 git status、git diff 应只包含本工作令的改动（新文件除外）。
+报告格式（每阶段小结固定用这个模板）：
+text
+复制
+【阶段 N 小结】
+- 改了哪些文件：……
+- 新增/修改了哪些测试：……
+- 验证结果（命令 + 关键输出）：……
+- 本次发现但未处理的额外问题：……
+- 当前 commit：……
+二、项目现状速览（让你和我们同频，不展开）
+前端：React 18 + TS + Vite + Zustand + Axios；三页：AgentConfig / AgentRun / Evaluation；WebSocket + 轮询降级。
+后端：FastAPI + SQLAlchemy 2 Async + SQLite/aiosqlite；挂 /api 与 /api/v1 两组等价路由；Alembic 自动迁移 + 记忆 TTL 清理。
+核心闭环：配置 Agent → 跑 ReAct → 逐步落库 trace → WebSocket 实时推 → 暂停/恢复/取消 → 批量评测打分。
+现状基线：后端 285 passed（约 19.5s）；前端 TS 类型检查 + 生产构建通过；git 干净。
+三、阶段 0 —— 正确性与安全地基（先做，决定「能不能被信任」）
+0.1 修「max_steps 耗尽后误报成功」❗最高优先
+文件：backend/app/agent/loop.py（约 793–974 行附近的生产版 AgentLoop）。
+问题：生产循环自然耗尽 max_steps、但尚未产生 final_answer 时，没有设置 terminated，导致最终 status = success、output = ""。
+改法：循环达到 max_steps 仍无 final_answer 时，显式设置 terminated 终止状态，并把该次 Run 标记为失败/「未完成」终止状态（可新增 max_steps_exceeded 或 incomplete 终止态；但绝不能是 success）。有中间产物可保留进输出，但状态必须不是成功。
+验证：新增定向测试——内存数据库、max_steps=1、模型首响仍要求调工具；断言最终 status != success。
+0.2 Run 参数覆盖改为不可变快照
+文件：backend/app/api/runs.py（约 168–184 行）。
+问题：RunCreate 的 model / temperature / max_steps 被直接赋给 Agent ORM 并与 Run 一起提交，导致覆盖值永久写回 Agent。
+改法：引入 Run 级别的不可变配置快照（如 Run 表新增 config 字段，或独立 LoopConfig），后台运行读快照覆盖值，Agent 行保持原样。把代码注释里「without mutating the agent record」的语义真正兑现。
+验证：创建带覆盖参数的 run 后，断言 Agent 行的原字段值未被改动。
+0.3 统一 AgentLoop 实现
+位置：同一文件内 AgentLoopV2 被定义了两次，后者覆盖前者，是维护隐患。
+改法：删除重复定义，全局只保留一份；确认所有 import / 引用指向唯一实现。
+验证：全量测试通过，无残留引用或 ImportError。
+0.4 修 Docker Compose 默认配置
+文件：docker-compose.yml（约 29–44 行）。
+改法：
+AGENTFORGE_DATABASE_URL → sqlite+aiosqlite:///./data/agentforge.db（因为后端用 create_async_engine，必须带异步驱动）。
+AGENTFORGE_VECTOR_BACKEND=chromadb → inprocess（源码只接受 inprocess 或尚未实现的 chroma）。
+验证：确认配置值与源码实际接受的枚举一致；有条件时实际 docker compose up --build 启动到健康检查通过，否则在小结里明确标注「未实际构建容器」。
+0.5 安全边界最小集
+改法（按此顺序）：
+加一层 API 鉴权（起步用静态 token 即可，后续阶段再升级多用户）；
+shell_exec、file、http 等危险工具默认关闭，需显式开启才可用；
+增加目录白名单 + 网络白名单；
+把工具「风险等级」从「仅前端展示」升级为真正的执行拦截（高风险未授权直接拒绝）。
+验证：默认配置下调用危险工具应被拒绝；开启授权后可用；补对应测试。
+四、阶段 1 —— 状态机与统计正确性
+1.1 启动时 stale-run 恢复
+问题：BackgroundTasks 非持久队列，进程重启后 running/pending 记录悬空。
+改法：启动时扫描处于 running/pending 且已超时的 Run，统一标记为失败或可恢复的明确状态；当前阶段明确维持单 worker。
+验证：模拟「进程崩溃后重启」，断言悬空 Run 被正确收口，不会永远卡在 running。
+1.2 拆开统计口径
+文件：backend/app/api/runs.py（约 257–265 行）。
+问题：step_count 实为「本次新增 trace 条数」而非「LLM 轮数」；暂停/恢复后前段被覆盖；duration_ms 只保留当前段；paused 结果也写了 finished_at。
+改法：分别记录并累加：LLM 轮数（llm_calls）、trace 条数、累计执行段耗时；paused 状态下不写 finished_at。
+验证：定向暂停/恢复测试——断言最终统计是整段累计、不是当前段覆盖值。
+1.3 记忆向量索引修复
+文件：backend/app/memory/embeddings.py（约 33–43 行）。
+问题：默认分词器只提取 [a-z0-9]+，明确忽略 CJK，导致纯中文（如「我喜欢杭州」）默认 embedding 范数为 0；且进程内向量索引重启不重建，embed/hybrid 召回下降。
+改法：
+启动时重建进程内向量索引（从持久化的 Memory 行 + embedding blob）；
+接入真实中文 embedding（本地 bge-m3 等），替换对中文无效的 hashing 方案。
+验证：重启后 embed 检索命中率恢复正常；纯中文语料 embedding 范数 > 0。
+五、阶段 2 —— 评测语义收敛
+进度口径：backend/app/eval/runner.py（约 297–328 行）内联评测在开始前就为所有 case 建占位行、/progress 用 case 行数算 done，导致一开始就显示全部完成。改为按已完成 case 数计算进度。
+阈值语义统一：数据集对象评分器使用 score.passed，与请求里 pass_threshold 的最终通过条件未对齐；统一由 pass_threshold 决定最终通过。
+异步阻塞：把异步路径里的 time.sleep 换成 asyncio.sleep，避免阻塞事件循环。
+资源释放：确保 LLM HTTP 客户端在使用后被正确关闭。
+清理弃用告警：datetime.utcnow() 弃用告警、pytest 收集告警处理掉。
+验证：全量测试通过，无上述告警。
+六、阶段 3 —— 放大差异化（价值灵魂，从这里起飞）
+持久向量后端：把记忆向量从「进程内」升级为持久后端（sqlite-vec 或 Qdrant），让「长期记忆」从 demo 变真卖点。
+闭环打通：把「评测失败的 case → 自动沉淀进记忆 / 给出提示词迭代建议 → 二次评测」这条链路贯通，实现「越用越准」。
+观测增强：trace 时间线可视化、token/成本统计、两次运行的结果 diff。
+七、阶段 4 —— 单人 → 团队（生产版分水岭）
+顺序不可颠倒，否则迁移成本翻倍：
+
+先确认 Run 状态已持久化 + stale-run 恢复已正确（阶段 1 的地基）；
+BackgroundTasks → 持久任务队列（arq 或 Celery + Redis）；
+SQLite → Postgres；
+之后才引入多 worker；
+配套：多用户 + RBAC、真沙箱执行（每 run 独立容器起步）、OCI 镜像一键部署。
+八、阶段 5 —— 生态固化
+补充国产 provider：Kimi、GLM、豆包、通义；
+工具插件化（可插拔注册）；
+成本与质量基线报告。
+九、最终交付清单（全部完成后一次性交回）
+所有阶段的 commit 记录（含每个 commit message）；
+每个阶段的「阶段小结」汇总；
+全量测试最终结果（命令 + 输出尾部）；
+前端 TS 检查 + 生产构建结果；
+一张「改动文件清单」和「你发现但未处理的额外问题清单」（供我下一轮决策）；
+最终 git status / git diff --stat 摘要。

@@ -27,8 +27,12 @@ name: agentforge
 # ──────────────────────────────────────────────────────────────
 
 x-common-env: &common-env
-  AGENTFORGE_DATABASE_URL: ${AGENTFORGE_DATABASE_URL:-sqlite:///./data/agentforge.db}
+  AGENTFORGE_DATABASE_URL: ${AGENTFORGE_DATABASE_URL:-postgresql+asyncpg://agentforge:agentforge@postgres:5432/agentforge}
   AGENTFORGE_LLM_PROVIDER: ${AGENTFORGE_LLM_PROVIDER:-mock}
+  AGENTFORGE_API_TOKEN: ${AGENTFORGE_API_TOKEN:-}
+  AGENTFORGE_ENABLE_DANGEROUS_TOOLS: ${AGENTFORGE_ENABLE_DANGEROUS_TOOLS:-false}
+  AGENTFORGE_FILE_ALLOWED_DIRS: ${AGENTFORGE_FILE_ALLOWED_DIRS:-[]}
+  AGENTFORGE_HTTP_ALLOWED_HOSTS: ${AGENTFORGE_HTTP_ALLOWED_HOSTS:-[]}
   AGENTFORGE_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   AGENTFORGE_OPENAI_MODEL: ${AGENTFORGE_OPENAI_MODEL:-gpt-4o-mini}
   AGENTFORGE_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -36,7 +40,7 @@ x-common-env: &common-env
   AGENTFORGE_MAX_STEPS: ${AGENTFORGE_MAX_STEPS:-10}
   AGENTFORGE_MAX_TOKENS: ${AGENTFORGE_MAX_TOKENS:-8000}
   # Vector memory
-  AGENTFORGE_VECTOR_BACKEND: ${AGENTFORGE_VECTOR_BACKEND:-chromadb}
+  AGENTFORGE_VECTOR_BACKEND: ${AGENTFORGE_VECTOR_BACKEND:-inprocess}
   AGENTFORGE_VECTOR_URL: http://chromadb:8000
   # Sandbox
   AGENTFORGE_SANDBOX_MODE: ${AGENTFORGE_SANDBOX_MODE:-docker}
@@ -77,6 +81,8 @@ services:
       retries: 5
       start_period: 10s
     depends_on:
+      postgres:
+        condition: service_healthy
       agentforge-sandbox:
         condition: service_started
       chromadb:
@@ -99,6 +105,7 @@ services:
       # non-localhost host when running the browser on a different
       # machine than the stack).
       VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8000/api}
+      VITE_API_TOKEN: ${AGENTFORGE_API_TOKEN:-}
     # Bind-mount the source tree so that edits on the Windows host
     # are picked up by Vite HMR *immediately* (no `docker compose
     # up --build` round-trip).  node_modules and the Vite cache
@@ -147,7 +154,26 @@ services:
       - agentforge-net
     command: ["python", "-c", "print('AgentForge sandbox template image ready')"]
 
-  # ─── 4. ChromaDB (vector memory) ────────────────────────────
+  # ─── 4. PostgreSQL (durable application state) ──────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentforge-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentforge}
+      POSTGRES_DB: ${POSTGRES_DB:-agentforge}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - agentforge-net
+
+  # ─── 5. ChromaDB (optional vector memory) ───────────────────
   chromadb:
     image: chromadb/chroma:0.5.20
     container_name: agentforge-chromadb
@@ -174,6 +200,8 @@ services:
       - agentforge-net
 
 volumes:
+  postgres-data:
+    name: agentforge-postgres-data
   chroma-data:
     name: agentforge-chroma-data
 

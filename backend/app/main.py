@@ -4,10 +4,11 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.auth import require_api_token
 from app.api.agents import (
     memory_router,
     router as agents_router,
@@ -90,34 +91,24 @@ def create_app() -> FastAPI:
     )
 
     # ---- Routers ----
-    # Versioned API (e.g. /api/v1/agents)
-    app.include_router(agents_router, prefix=settings.api_prefix, tags=["agents"])
-    app.include_router(runs_router, prefix=settings.api_prefix, tags=["runs"])
-    app.include_router(evals_router, prefix=settings.api_prefix, tags=["evals"])
-    app.include_router(memory_router, prefix=settings.api_prefix, tags=["memory"])
-    app.include_router(tools_router, prefix=settings.api_prefix, tags=["tools"])
-    # 0.1.3 #3 -- tool metadata CRUD endpoints (GET /tools,
-    # GET /tools/{name}, PUT /tools/{name}/metadata, DELETE
-    # /tools/{name}/metadata).  Mounted under the same prefix as the
-    # other routers so the versioned URL mirrors the unversioned one.
-    app.include_router(
-        tools_metadata_router, prefix=settings.api_prefix, tags=["tools"]
+    protected = [Depends(require_api_token)]
+    http_routers = (
+        (agents_router, "agents"),
+        (runs_router, "runs"),
+        (evals_router, "evals"),
+        (memory_router, "memory"),
+        (tools_router, "tools"),
+        (tools_metadata_router, "tools"),
     )
-    # WebSocket live-trace stream (0.1.2 #10).  Same router mounted
-    # twice so the unversioned ``/api/agents/.../runs/.../ws`` and
-    # the versioned ``/api/v1/agents/.../runs/.../ws`` both work,
-    # mirroring the HTTP routers above.
+    for api_router, tag in http_routers:
+        for prefix in (settings.api_prefix, "/api"):
+            app.include_router(
+                api_router, prefix=prefix, tags=[tag], dependencies=protected
+            )
+    # WebSocket authentication is performed in the handler because browsers
+    # use a subprotocol credential rather than an arbitrary HTTP header.
     app.include_router(ws_router, prefix=settings.api_prefix, tags=["ws"])
     app.include_router(ws_router, prefix="/api", tags=["ws"])
-    # Unversioned aliases (e.g. /api/agents) for client convenience & tests
-    app.include_router(agents_router, prefix="/api", tags=["agents"])
-    app.include_router(runs_router, prefix="/api", tags=["runs"])
-    app.include_router(evals_router, prefix="/api", tags=["evals"])
-    app.include_router(memory_router, prefix="/api", tags=["memory"])
-    app.include_router(tools_router, prefix="/api", tags=["tools"])
-    # 0.1.3 #3 -- unversioned alias for the metadata router so legacy
-    # ``/api/tools/{name}/metadata`` URLs work without a ``/v1`` rewrite.
-    app.include_router(tools_metadata_router, prefix="/api", tags=["tools"])
 
     # ---- Health & meta ----
     @app.get("/health", tags=["meta"])

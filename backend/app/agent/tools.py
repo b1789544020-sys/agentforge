@@ -102,6 +102,26 @@ class ToolError(RuntimeError):
     """Base class for tool-related errors."""
 
 
+def _enforce_dangerous_tool_policy(name: str, spec: Any) -> None:
+    """Fail closed before a high-risk handler can touch the host.
+
+    Risk metadata is now an execution boundary rather than display-only
+    metadata.  ``file_read`` and ``python_eval`` are included explicitly
+    because their historical risk labels are less strict than their effect.
+    """
+    from app.config import get_settings
+
+    dangerous = (
+        name in {"file_read", "file_write", "shell_exec", "http_request", "python_eval"}
+        or getattr(spec, "risk", "safe") in {"write", "network", "exec"}
+    )
+    if dangerous and not get_settings().enable_dangerous_tools:
+        raise PermissionError(
+            f"dangerous tool {name!r} is disabled; set "
+            "AGENTFORGE_ENABLE_DANGEROUS_TOOLS=true to enable it"
+        )
+
+
 class ToolNotFoundError(ToolError):
     """Raised when a requested tool name is not registered."""
 
@@ -375,6 +395,7 @@ class ToolRegistry:
         spec = self._items.get(name)
         if spec is None:
             raise ToolNotFoundError(f"tool {name!r} is not registered")
+        _enforce_dangerous_tool_policy(name, spec)
         handler = spec.handler
         merged = self._merge_args(arguments, kwargs)
         t0 = time.perf_counter()
@@ -403,6 +424,7 @@ class ToolRegistry:
         spec = cls._items.get(name)
         if spec is None:
             raise ToolNotFoundError(f"tool {name!r} is not registered")
+        _enforce_dangerous_tool_policy(name, spec)
         handler = spec.handler
         merged = cls._merge_args(arguments, kwargs)
         t0 = time.perf_counter()
@@ -820,7 +842,32 @@ async def python_eval(expression: str, mode: str = "math") -> str:
         },
     },
 )
+def _validate_http_url(url: str) -> None:
+    """Require an explicitly allowed HTTP(S) hostname before any I/O."""
+    from urllib.parse import urlsplit
+
+    from app.config import get_settings
+
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme not in {"http", "https"} or not host or parsed.username:
+        raise ToolError("http_request: only credential-free HTTP(S) URLs are allowed")
+    allowed = {item.lower().rstrip(".") for item in get_settings().http_allowed_hosts}
+    matched = host in allowed or any(
+        pattern.startswith("*.") and host.endswith(pattern[1:]) and host != pattern[2:]
+        for pattern in allowed
+    )
+    if not matched:
+        raise ToolError(f"http_request: host {host!r} is not in the allowlist")
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
+        return None
+
+
 def http_request(url: str, method: str = "GET", **kwargs: Any) -> Dict[str, Any]:
+    _validate_http_url(url)
     timeout = float(kwargs.get("timeout_s", 30))
     body = kwargs.get("body")
     data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -830,7 +877,10 @@ def http_request(url: str, method: str = "GET", **kwargs: Any) -> Dict[str, Any]
     if body is not None and "Content-Type" not in (kwargs.get("headers") or {}):
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # Redirects are returned as responses instead of being followed to a
+        # potentially non-allowlisted host.
+        opener = urllib.request.build_opener(_NoRedirectHandler)
+        with opener.open(req, timeout=timeout) as resp:
             raw = resp.read()
             hdrs = dict(resp.getheaders())
             status = resp.status
@@ -986,6 +1036,23 @@ async def shell_exec(command: str, **kwargs: Any) -> Dict[str, Any]:
     }
 
 
+def _allowed_file_path(path: str) -> Any:
+    """Resolve ``path`` and require it to stay inside an allowed directory."""
+    from pathlib import Path
+
+    from app.config import get_settings
+
+    roots = get_settings().file_allowed_dirs
+    if not roots:
+        raise ToolError("file access denied: AGENTFORGE_FILE_ALLOWED_DIRS is empty")
+    candidate = Path(path).expanduser().resolve(strict=False)
+    for configured in roots:
+        root = Path(configured).expanduser().resolve(strict=False)
+        if candidate == root or root in candidate.parents:
+            return candidate
+    raise ToolError(f"file access denied: {str(candidate)!r} is outside the allowlist")
+
+
 @tool(
     name="file_read",
     description="Read a UTF-8 text file (truncated to max_bytes).",
@@ -1001,10 +1068,8 @@ async def shell_exec(command: str, **kwargs: Any) -> Dict[str, Any]:
     },
 )
 def file_read(path: str, **kwargs: Any) -> Dict[str, Any]:
-    from pathlib import Path as _P
-
     max_b = int(kwargs.get("max_bytes", 65536))
-    p = _P(path)
+    p = _allowed_file_path(path)
     data = p.read_bytes()[:max_b]
     return {"path": str(p), "size": len(data), "content": data.decode("utf-8", errors="replace")}
 
@@ -1025,9 +1090,7 @@ def file_read(path: str, **kwargs: Any) -> Dict[str, Any]:
     },
 )
 def file_write(path: str, content: str, **kwargs: Any) -> Dict[str, Any]:
-    from pathlib import Path as _P
-
-    p = _P(path)
+    p = _allowed_file_path(path)
     mode = "a" if kwargs.get("mode") == "append" else "w"
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open(mode, encoding="utf-8") as f:
@@ -1216,6 +1279,9 @@ class ToolExecutor:
             raise PermissionError(
                 f"tool {name!r} is not allowed by this executor's policy"
             )
+        spec = self.registry.spec(name)
+        if spec is not None:
+            _enforce_dangerous_tool_policy(name, spec)
         return await self._execute_via_registry(name, arguments, kwargs)
 
 

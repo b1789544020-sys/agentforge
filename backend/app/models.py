@@ -235,6 +235,10 @@ class Run(Base):
     )
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Immutable per-run execution snapshot.  Request-level overrides must
+    # never be written back to the Agent definition.
+    config: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+
     total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     completion_tokens: Mapped[int] = mapped_column(

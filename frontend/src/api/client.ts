@@ -31,11 +31,23 @@ function normaliseApiBase(raw: string): string {
   return base;
 }
 export const API_BASE = normaliseApiBase(RAW_BASE);
+export const API_TOKEN = (import.meta.env.VITE_API_TOKEN ?? "").trim();
 
 export const api = axios.create({
   baseURL: API_BASE,
   timeout: 60_000,
+  headers: API_TOKEN ? { "X-API-Key": API_TOKEN } : undefined,
 });
+
+/** Browser-safe WebSocket credentials that never put the token in a URL. */
+export function streamProtocols(): string[] | undefined {
+  if (!API_TOKEN) return undefined;
+  const bytes = new TextEncoder().encode(API_TOKEN);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const encoded = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return ["agentforge", `bearer.${encoded}`];
+}
 
 /**
  * Build the WebSocket URL for a run's live trace stream.
@@ -261,7 +273,7 @@ export const Runs = {
    * accepts the connection.
    */
   stream: (agentId: string, runId: string): WebSocket =>
-    new WebSocket(streamUrl(agentId, runId)),
+    new WebSocket(streamUrl(agentId, runId), streamProtocols()),
 };
 
 // --- Memory endpoints -------------------------------------------------------

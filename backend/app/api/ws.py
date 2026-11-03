@@ -53,6 +53,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
+from app.api.auth import require_websocket_token
 from app.api.runs import _serialize_run
 from app.api.ws_broadcaster import broadcaster
 from app.database import async_session_factory
@@ -90,15 +91,21 @@ async def stream_run(websocket: WebSocket, agent_id: str, run_id: str) -> None:
     * the client disconnects (``WebSocketDisconnect``);
     * the agent loop raises and we emit ``run.error``.
     """
+    if not await require_websocket_token(websocket):
+        return
     # Validate the run belongs to the agent *before* accepting so a
-    # bad URL gives a clean 403-ish close rather than a hung socket.
+    # bad URL gives a clean close rather than a hung socket.
     async with async_session_factory() as session:
         run = await session.get(Run, run_id)
         if run is None or run.agent_id != agent_id:
             await websocket.close(code=4404, reason="run not found")
             return
 
-    await websocket.accept()
+    offered_protocols = {
+        item.strip()
+        for item in websocket.headers.get("sec-websocket-protocol", "").split(",")
+    }
+    await websocket.accept(subprotocol="agentforge" if "agentforge" in offered_protocols else None)
 
     # Push a snapshot of what we already know.  Steps are ordered by
     # index so the front-end can append them straight onto the

@@ -70,7 +70,7 @@ class Settings(BaseSettings):
             tail = url[len("sqlite+aiosqlite://") :]
             self.sync_database_url = "sqlite:///" + tail.lstrip("/")
         elif url.startswith("postgresql+asyncpg://"):
-            self.sync_database_url = "postgresql+psycopg2://" + url[
+            self.sync_database_url = "postgresql+psycopg://" + url[
                 len("postgresql+asyncpg://") :
             ]
         return self
@@ -119,6 +119,14 @@ class Settings(BaseSettings):
     vector_backend: str = "inprocess"  # "inprocess" | "chroma"
     embedding_dim: int = 128
     embedding_max_tokens: int = 512  # truncate long inputs to keep vectors bounded
+
+    # ---- API / tool security -----------------------------------------
+    # Empty keeps the local single-user demo frictionless.  Setting this
+    # value protects every HTTP API (health excluded) and run WebSocket.
+    api_token: str | None = None
+    enable_dangerous_tools: bool = False
+    file_allowed_dirs: list[str] = Field(default_factory=list)
+    http_allowed_hosts: list[str] = Field(default_factory=list)
 
     # ---- Auth --------------------------------------------------------
     secret_key: str = "change-me-in-production-please"

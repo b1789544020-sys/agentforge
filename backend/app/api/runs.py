@@ -24,6 +24,26 @@ router = APIRouter(prefix="/agents/{agent_id}/runs", tags=["runs"])
 logger = logging.getLogger(__name__)
 
 
+def _loop_config_for_run(run: Run, *, on_step: Any) -> LoopConfig:
+    """Rebuild execution settings solely from the run's immutable snapshot.
+
+    Rows created before the snapshot migration fall back to the Agent values
+    supplied by ``AgentLoop`` itself.
+    """
+    try:
+        snapshot = json.loads(run.config or "{}")
+    except (TypeError, ValueError):
+        snapshot = {}
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    return LoopConfig(
+        model=snapshot.get("model"),
+        temperature=snapshot.get("temperature"),
+        max_steps=snapshot.get("max_steps"),
+        on_step=on_step,
+    )
+
+
 def _build_on_step(run_id: str) -> Any:
     """Build a ``LoopConfig.on_step`` callback that fans out a step.
 
@@ -165,19 +185,19 @@ async def create_run(
     if not agent:
         raise HTTPException(status_code=404, detail="agent not found")
 
-    # Apply per-run overrides without mutating the agent record.
-    if payload.model:
-        agent.model = payload.model
-    if payload.temperature is not None:
-        agent.temperature = payload.temperature
-    if payload.max_steps is not None:
-        agent.max_steps = payload.max_steps
-
+    config_snapshot = {
+        "model": payload.model or agent.model,
+        "temperature": (
+            payload.temperature if payload.temperature is not None else agent.temperature
+        ),
+        "max_steps": payload.max_steps if payload.max_steps is not None else agent.max_steps,
+    }
     run = Run(
         id=str(uuid.uuid4()),
         agent_id=agent_id,
         input=payload.input,
         status="running",
+        config=json.dumps(config_snapshot),
         started_at=datetime.utcnow(),
     )
     session.add(run)
@@ -245,7 +265,7 @@ async def _execute_run(
             agent,
             session,
             session_id=session_id,
-            config=LoopConfig(on_step=_build_on_step(run_id)),
+            config=_loop_config_for_run(run, on_step=_build_on_step(run_id)),
         )
         # Register BEFORE we await so the API can flip the pause flag
         # even on the very first step of the loop.
@@ -406,7 +426,7 @@ async def _resume_run(
             agent,
             session,
             session_id=session_id,
-            config=LoopConfig(on_step=_build_on_step(run_id)),
+            config=_loop_config_for_run(run, on_step=_build_on_step(run_id)),
         )
         control.register_run(run_id, loop, loop._pause)
         try:

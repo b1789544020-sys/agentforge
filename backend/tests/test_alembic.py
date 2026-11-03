@@ -87,6 +87,12 @@ def test_alembic_upgrade_creates_all_tables(sqlite_file: Path) -> None:
     assert expected.issubset(tables), (
         f"missing: {expected - tables}\nall: {sorted(tables)}"
     )
+    cn = sqlite3.connect(str(sqlite_file))
+    try:
+        run_columns = {row[1] for row in cn.execute("PRAGMA table_info(agent_runs)")}
+    finally:
+        cn.close()
+    assert "config" in run_columns
 
 
 def test_alembic_downgrade_drops_everything(sqlite_file: Path) -> None:
