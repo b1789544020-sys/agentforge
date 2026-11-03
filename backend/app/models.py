@@ -602,6 +602,9 @@ class EvalRun(Base):
     )
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Immutable request snapshot used by persistent workers and retries.
+    request: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+
     # JSON list of case results
     results: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
 

@@ -40,6 +40,7 @@ from app.api.schemas import (
     EvalUploadResponse,
 )
 from app.database import get_session
+from app.dispatch import submit_eval
 from app.eval import control as eval_control
 from app.eval.metrics import Metrics
 from app.eval.runner import EvalRunner
@@ -205,6 +206,12 @@ async def create_eval(
         scorer=(payload.scorer_name or payload.scorer) or "composite",
         pass_threshold=float(payload.pass_threshold),
         priority=payload.priority,
+        request=json.dumps({
+            "kind": "dataset" if has_dataset else "inline",
+            "test_case_ids": payload.test_case_ids if has_dataset else [],
+            "cases": [] if has_dataset else cases_payload,
+            "max_concurrency": payload.max_concurrency,
+        }, ensure_ascii=False),
         total=total,
         passed=0,
         failed=0,
@@ -214,60 +221,7 @@ async def create_eval(
     session.add(placeholder)
     await session.commit()
     await session.refresh(placeholder)
-    cancel_event = eval_control.register(eval_run_id)
-
-    # ---- schedule the actual work in the background -----------------------
-    async def _execute_eval() -> None:
-        from app.database import async_session_factory
-
-        async with async_session_factory() as inner:
-            inner_agent = await inner.get(Agent, agent_id)
-            if inner_agent is None:
-                return
-            # The constructor's ``scorer=`` slot is reserved for the
-            # *legacy callable* form.  Object-style scorers are passed
-            # directly to ``run_eval`` (the legacy ``run`` does not
-            # accept a scorer override).
-            legacy_scorer = None
-            eval_scorer: Any = None
-            if callable(scorer) and not isinstance(scorer, EvalScorer):
-                legacy_scorer = scorer
-            else:
-                eval_scorer = scorer
-            runner = EvalRunner(
-                inner,
-                inner_agent,
-                scorer=legacy_scorer,
-                pass_threshold=payload.pass_threshold,
-                max_concurrency=payload.max_concurrency,
-                # 0.1.2 5.1 轮: 并发 case 各用独立 session,
-                # 共享 bookkeeping session 会因多 loop 抢连接死锁.
-                session_factory=async_session_factory,
-                cancel_event=cancel_event,
-                priority=payload.priority,
-            )
-            if has_dataset:
-                await runner.run_eval(
-                    payload.test_case_ids,
-                    scorer=eval_scorer,
-                    pass_threshold=payload.pass_threshold,
-                    dataset=payload.dataset_name,
-                    eval_run_id=eval_run_id,
-                )
-            else:
-                await runner.run(
-                    cases_payload,
-                    dataset_name=payload.dataset_name,
-                    eval_run_id=eval_run_id,
-                )
-
-    async def _run() -> None:
-        try:
-            await _execute_eval()
-        finally:
-            eval_control.unregister(eval_run_id)
-
-    background.add_task(_run)
+    submit_eval(eval_run_id, background)
     return _serialize_run(placeholder, [])
 
 
@@ -288,7 +242,7 @@ async def cancel_eval(
         raise HTTPException(status_code=404, detail="eval run not found")
     if run.status in {"completed", "failed", "cancelled"}:
         raise HTTPException(status_code=409, detail=f"cannot cancel eval in status {run.status!r}")
-    signalled = eval_control.request_cancel(eval_id)
+    signalled = await eval_control.request_cancel_async(eval_id)
     run.status = "cancelling" if signalled else "cancelled"
     if not signalled:
         run.finished_at = datetime.utcnow()
@@ -444,8 +398,6 @@ async def upload_eval_dataset(
         )
 
     # ---- create the EvalRun row + schedule the runner -----------------
-    from app.database import async_session_factory
-
     eval_run_id = str(uuid.uuid4())
     placeholder = EvalRun(
         id=eval_run_id,
@@ -454,6 +406,11 @@ async def upload_eval_dataset(
         scorer=scorer_name or "composite",
         pass_threshold=float(pass_threshold),
         priority=priority,
+        request=json.dumps({
+            "kind": "inline",
+            "cases": [c.to_runner_payload() for c in cases],
+            "max_concurrency": max_concurrency,
+        }, ensure_ascii=False),
         total=len(cases),
         passed=0,
         failed=0,
@@ -463,53 +420,7 @@ async def upload_eval_dataset(
     session.add(placeholder)
     await session.commit()
     await session.refresh(placeholder)
-    cancel_event = eval_control.register(eval_run_id)
-
-    payloads = [c.to_runner_payload() for c in cases]
-    parsed_format = fmt
-
-    async def _run() -> None:
-        from app.eval.runner import EvalRunner as _Runner
-
-        async with async_session_factory() as inner:
-            inner_agent = await inner.get(Agent, agent_id)
-            if inner_agent is None:
-                eval_control.unregister(eval_run_id)
-                return
-            runner = _Runner(
-                inner,
-                inner_agent,
-                scorer=None,
-                pass_threshold=float(pass_threshold),
-                max_concurrency=max_concurrency,
-                session_factory=async_session_factory,
-                cancel_event=cancel_event,
-                priority=priority,
-            )
-            try:
-                await runner.run(
-                    payloads,
-                    dataset_name=dataset_name,
-                    eval_run_id=eval_run_id,
-                )
-            except Exception:  # noqa: BLE001
-                import logging
-
-                logging.getLogger(__name__).exception(
-                    "upload-eval run failed agent_id=%s eval_run_id=%s",
-                    agent_id,
-                    eval_run_id,
-                )
-                try:
-                    inner_run = await inner.get(EvalRun, eval_run_id)
-                    if inner_run is not None:
-                        inner_run.status = "failed"
-                        await inner.commit()
-                except Exception:  # noqa: BLE001
-                    pass
-        eval_control.unregister(eval_run_id)
-
-    background.add_task(_run)
+    submit_eval(eval_run_id, background)
 
     return EvalUploadResponse(
         run_id=eval_run_id,
@@ -517,7 +428,7 @@ async def upload_eval_dataset(
         case_count=len(cases),
         accepted=len(cases),
         rejected=0,
-        format=parsed_format,
+        format=fmt,
     ).model_dump()
 
 

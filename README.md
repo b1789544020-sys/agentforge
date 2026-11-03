@@ -148,7 +148,7 @@ agentforge/
    ```bash
    docker compose up --build
    ```
-   默认启动 API、前端、PostgreSQL、Qdrant 和沙箱模板。当前环境若未安装 Docker，请先完成本地开发验证，不要把配置检查当作容器验收。
+   默认启动 PostgreSQL、Qdrant、Redis、一次性 migration、双 worker API、Celery worker/Beat、Nginx 前端和沙箱模板。迁移成功且 API 健康后 Celery 才启动。当前环境若未安装 Docker，请先完成本地开发验证，不要把配置检查当作容器验收。
 3. 打开浏览器：
    - 前端：http://localhost:5173
    - API 文档：http://localhost:8000/docs
@@ -226,8 +226,14 @@ curl http://localhost:8000/api/v1/agents/<AGENT_ID>/evals/<EVAL_ID> | head -c 40
 | `AGENTFORGE_ENABLE_DANGEROUS_TOOLS` | `false` | 总开关：默认拒绝 shell、文件、HTTP 和高风险工具 |
 | `AGENTFORGE_FILE_ALLOWED_DIRS` | `[]` | JSON 数组；文件工具只能访问这些目录及其子目录 |
 | `AGENTFORGE_HTTP_ALLOWED_HOSTS` | `[]` | JSON 数组；HTTP 工具只允许这些主机，支持 `*.example.com` |
+| `AGENTFORGE_TASK_BACKEND` | `memory` | `memory` / `celery`；Compose 默认持久 Celery 任务 |
+| `AGENTFORGE_CONTROL_BACKEND` | `memory` | `memory` / `redis`；控制暂停、评测取消与 WebSocket 广播 |
+| `AGENTFORGE_REDIS_URL` | `redis://localhost:6379/0` | Redis broker / pubsub / 控制与执行锁 |
+| `AGENTFORGE_RUN_MIGRATIONS` | `true` | 本地启动是否迁移；Compose 由独立 migration 服务执行，API 设为 `false` |
 
 > **安全边界**：风险标签也会参与执行拦截。开启危险工具并不等于完成安全隔离；尤其是宿主 `shell_exec`，不能暴露给不可信用户。WebSocket 通过子协议头携带 token，不把长期 token 放进 URL。Docker Compose 默认使用 PostgreSQL；本地非 Docker 开发仍默认 SQLite。
+
+> **持久执行**：Run 每个完整迭代提交 `RunState`，EvalRun 保存请求快照。Celery 使用 late-ack、worker-lost requeue、每任务 Redis 锁和超时看门狗；恢复是 at-least-once，Eval 重放前清理部分结果，避免重复计数。暂停/恢复、取消和 WebSocket 跨 worker 走 Redis。多 worker 的迁移只由 `migrate` 服务执行，启动恢复另有 Redis 锁防重复投递。
 
 ---
 

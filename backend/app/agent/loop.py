@@ -326,6 +326,8 @@ class RunState:
     total_completion_tokens: int = 0
     last_status: str = STATE_RUNNING
     final_answer: str = ""
+    duration_ms: int = 0
+    step_count: int = 0
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> str:
@@ -340,6 +342,8 @@ class RunState:
                 "total_completion_tokens": self.total_completion_tokens,
                 "last_status": self.last_status,
                 "final_answer": self.final_answer,
+                "duration_ms": self.duration_ms,
+                "step_count": self.step_count,
                 "extra": self.extra,
             },
             ensure_ascii=False,
@@ -369,6 +373,8 @@ class RunState:
             ),
             last_status=data.get("last_status", STATE_RUNNING) or STATE_RUNNING,
             final_answer=data.get("final_answer", "") or "",
+            duration_ms=int(data.get("duration_ms", 0) or 0),
+            step_count=int(data.get("step_count", 0) or 0),
             extra=dict(data.get("extra", {}) or {}),
         )
 
@@ -760,6 +766,8 @@ class AgentLoop:
             total_prompt = resume_state.total_prompt_tokens
             total_completion = resume_state.total_completion_tokens
             output = resume_state.final_answer
+            previous_duration_ms = resume_state.duration_ms or run.duration_ms
+            previous_step_count = resume_state.step_count or run.step_count
             status = STATE_RUNNING
             error: Optional[str] = None
         else:
@@ -769,6 +777,8 @@ class AgentLoop:
             total_prompt = 0
             total_completion = 0
             output = ""
+            previous_duration_ms = 0
+            previous_step_count = 0
             status = RUN_STATUS_SUCCESS
             error = None
 
@@ -960,8 +970,25 @@ class AgentLoop:
                 else:
                     consecutive_errors = 0
 
+                # Persist a crash-recovery checkpoint after every completed
+                # think/act/observe iteration, not only for explicit pause.
+                self._persist_state(
+                    run,
+                    context=context,
+                    step_index=step_idx + 1,
+                    consecutive_errors=consecutive_errors,
+                    total_prompt=total_prompt,
+                    total_completion=total_completion,
+                    final_answer=output,
+                    duration_ms=previous_duration_ms + int((time.perf_counter() - start) * 1000),
+                    step_count=previous_step_count + len(steps),
+                    last_status=STATE_RUNNING,
+                )
+                await _commit_with_retry(self.session)
                 # ---- pause checkpoint ----
-                if self._pause.is_set():
+                from app.agent import control as run_control
+
+                if self._pause.is_set() or await run_control.pause_requested(run.id):
                     paused = True
                     status = RUN_STATUS_PAUSED
                     self._persist_state(
@@ -972,6 +999,8 @@ class AgentLoop:
                         total_prompt=total_prompt,
                         total_completion=total_completion,
                         final_answer=output,
+                        duration_ms=previous_duration_ms + int((time.perf_counter() - start) * 1000),
+                        step_count=previous_step_count + len(steps),
                     )
                     break
             else:
@@ -1011,8 +1040,8 @@ class AgentLoop:
         run.total_tokens = total_prompt + total_completion
         run.prompt_tokens = total_prompt
         run.completion_tokens = total_completion
-        run.duration_ms = duration_ms
-        run.step_count = len(steps)
+        run.duration_ms = previous_duration_ms + duration_ms
+        run.step_count = previous_step_count + len(steps)
         run.finished_at = datetime.utcnow() if not paused else None
         if not paused:
             # clear state on terminal status
@@ -1067,6 +1096,9 @@ class AgentLoop:
         total_prompt: int,
         total_completion: int,
         final_answer: str,
+        duration_ms: int,
+        step_count: int,
+        last_status: str = STATE_PAUSED,
     ) -> None:
         """Snapshot the live loop into a :class:`RunState`."""
         state = RunState(
@@ -1077,8 +1109,10 @@ class AgentLoop:
             consecutive_errors=consecutive_errors,
             total_prompt_tokens=total_prompt,
             total_completion_tokens=total_completion,
-            last_status=STATE_PAUSED,
+            last_status=last_status,
             final_answer=final_answer,
+            duration_ms=duration_ms,
+            step_count=step_count,
         )
         # Persist the snapshot; the outer commit at end of run()
         # flushes this together with the rest of the row.

@@ -253,13 +253,26 @@ class EvalRunner:
         self.semaphore = asyncio.Semaphore(max(1, max_concurrency))
         self.cancel_event = cancel_event or asyncio.Event()
         self.priority = priority
+        self._eval_run_id = ""
+
+    async def _cancellation_requested(self) -> bool:
+        from app.eval import control as eval_control
+
+        if not self._eval_run_id:
+            return self.cancel_event.is_set()
+        return await eval_control.cancel_requested(self._eval_run_id, self.cancel_event)
 
     async def _run_agent_loop(self, loop: AgentLoop, user_input: str) -> LoopResult:
         """Run one case and cooperatively cancel it with its eval run."""
-        if self.cancel_event.is_set():
+        if await self._cancellation_requested():
             loop.cancel()
         run_task = asyncio.create_task(loop.run(user_input))
-        cancel_task = asyncio.create_task(self.cancel_event.wait())
+        from app.eval import control as eval_control
+
+        cancel_task = asyncio.create_task(
+            eval_control.wait_for_cancel(self._eval_run_id, self.cancel_event)
+            if self._eval_run_id else self.cancel_event.wait()
+        )
         try:
             await asyncio.wait(
                 {run_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
@@ -271,7 +284,7 @@ class EvalRunner:
             # same event-loop turn.  Since the eval was still active when
             # cancellation was requested, make the terminal result coherent
             # in both the returned value and the persisted Agent run.
-            if self.cancel_event.is_set() and result.status != "cancelled":
+            if await self._cancellation_requested() and result.status != "cancelled":
                 result.status = "cancelled"
                 result.error = "cancelled"
                 result.output = ""
@@ -306,6 +319,7 @@ class EvalRunner:
         eval_run_id: str | None = None,
     ) -> EvalResult:
         eval_run_id = eval_run_id or str(uuid.uuid4())
+        self._eval_run_id = eval_run_id
         case_records = list(cases)
         # The API layer may have already inserted a placeholder EvalRun
         # with this id. Merge so we update if it exists, otherwise insert.
@@ -328,7 +342,7 @@ class EvalRunner:
             run_row.passed = 0
             run_row.failed = 0
             run_row.average_score = 0.0
-            run_row.status = "cancelling" if self.cancel_event.is_set() else "running"
+            run_row.status = "cancelling" if await self._cancellation_requested() else "running"
             run_row.started_at = datetime.utcnow()
         await self.session.commit()
 
@@ -416,7 +430,7 @@ class EvalRunner:
                 persisted_run.failed = failed
                 persisted_run.average_score = avg
                 persisted_run.duration_ms = duration_ms
-                persisted_run.status = "cancelled" if self.cancel_event.is_set() else "completed"
+                persisted_run.status = "cancelled" if await self._cancellation_requested() else "completed"
                 persisted_run.finished_at = datetime.utcnow()
                 # Denormalised per-case cache for the list-runs endpoint.
                 persisted_run.results = json.dumps(
@@ -493,6 +507,7 @@ class EvalRunner:
         scorer = scorer or _default()
         threshold = self.pass_threshold if pass_threshold is None else pass_threshold
         eval_run_id = eval_run_id or str(uuid.uuid4())
+        self._eval_run_id = eval_run_id
 
         # Load the rows ---------------------------------------------------------
         ids = list(test_case_ids)
@@ -539,7 +554,7 @@ class EvalRunner:
             run_row.passed = 0
             run_row.failed = 0
             run_row.average_score = 0.0
-            run_row.status = "cancelling" if self.cancel_event.is_set() else "running"
+            run_row.status = "cancelling" if await self._cancellation_requested() else "running"
             run_row.started_at = datetime.utcnow()
             run_row.finished_at = None
             run_row.results = None
@@ -608,7 +623,7 @@ class EvalRunner:
                 # failed, so the run itself is always marked
                 # "completed".  A separate ``failed`` counter tracks
                 # the cases that did not pass.
-                run_row.status = "cancelled" if self.cancel_event.is_set() else "completed"
+                run_row.status = "cancelled" if await self._cancellation_requested() else "completed"
                 run_row.finished_at = datetime.utcnow()
                 # Mirror the per-case result on the run row as well so
                 # the "list runs" API can show them without N+1
@@ -682,7 +697,7 @@ class EvalRunner:
             tool_calls: list[dict[str, Any]] = []
             status = "failed"
             try:
-                if self.cancel_event.is_set():
+                if await self._cancellation_requested():
                     status = "cancelled"
                     error = "cancelled"
                 else:
@@ -798,7 +813,7 @@ class EvalRunner:
             output = ""
             tokens = 0
             try:
-                if self.cancel_event.is_set():
+                if await self._cancellation_requested():
                     error = "cancelled"
                 else:
                     async with self._resolve_session_factory()() as case_session:

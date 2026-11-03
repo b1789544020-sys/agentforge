@@ -19,6 +19,7 @@ from app.api.prompts import router as prompts_router
 from app.api.runs import router as runs_router
 from app.api.tools_metadata import router as tools_metadata_router
 from app.api.ws import router as ws_router
+from app.api.ws_broadcaster import broadcaster
 from app.config import get_settings
 from app.database import AsyncSessionLocal, init_db
 from app.memory.cleanup import schedule_periodic_cleanup
@@ -45,20 +46,32 @@ async def lifespan(app: FastAPI):
     # value without an explicit ``get_settings.cache_clear()`` dance.
     current = get_settings()
     logger.info("Starting %s v%s", current.app_name, current.app_version)
-    await init_db()
+    if current.run_migrations:
+        await init_db()
     logger.info("Database initialised at %s", current.database_url)
+    if current.task_backend == "celery" and current.run_recovery_enabled:
+        from app.tasks import recover_interrupted_runs
+
+        recovered = await recover_interrupted_runs()
+        if recovered:
+            logger.info("Requeued %d interrupted run(s)", recovered)
+    await broadcaster.start()
     interval = current.memory_cleanup_interval_seconds
-    if interval > 0:
+    if interval > 0 and current.task_backend != "celery":
         app.state.memory_cleanup_task = schedule_periodic_cleanup(
             AsyncSessionLocal, interval_seconds=interval
         )
         logger.info("Memory periodic cleanup scheduled every %.0fs", interval)
     else:
         app.state.memory_cleanup_task = None
-        logger.info("Memory periodic cleanup disabled (interval=0)")
+        logger.info("Memory periodic cleanup handled by Celery Beat or disabled")
     try:
         yield
     finally:
+        await broadcaster.stop()
+        from app.infra.redis import close_redis
+
+        await close_redis()
         task = getattr(app.state, "memory_cleanup_task", None)
         if task is not None and not task.done():
             task.cancel()

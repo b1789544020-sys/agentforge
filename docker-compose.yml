@@ -7,7 +7,7 @@ name: agentforge
 #      docker compose up --build
 #
 #  Exposed endpoints:
-#      frontend   → http://localhost:5173  (React dev server)
+#      frontend   → http://localhost:5173  (Nginx static build + API/WS proxy)
 #      api        → http://localhost:8000  (FastAPI)
 #      api/docs   → http://localhost:8000/docs  (Swagger UI)
 #      qdrant     → http://localhost:6333  (REST API + dashboard)
@@ -29,6 +29,9 @@ name: agentforge
 x-common-env: &common-env
   AGENTFORGE_DATABASE_URL: ${AGENTFORGE_DATABASE_URL:-postgresql+asyncpg://agentforge:agentforge@postgres:5432/agentforge}
   AGENTFORGE_LLM_PROVIDER: ${AGENTFORGE_LLM_PROVIDER:-mock}
+  AGENTFORGE_TASK_BACKEND: ${AGENTFORGE_TASK_BACKEND:-celery}
+  AGENTFORGE_CONTROL_BACKEND: ${AGENTFORGE_CONTROL_BACKEND:-redis}
+  AGENTFORGE_REDIS_URL: ${AGENTFORGE_REDIS_URL:-redis://redis:6379/0}
   AGENTFORGE_API_TOKEN: ${AGENTFORGE_API_TOKEN:-}
   AGENTFORGE_ENABLE_DANGEROUS_TOOLS: ${AGENTFORGE_ENABLE_DANGEROUS_TOOLS:-false}
   AGENTFORGE_FILE_ALLOWED_DIRS: ${AGENTFORGE_FILE_ALLOWED_DIRS:-[]}
@@ -51,6 +54,26 @@ x-common-env: &common-env
 
 services:
 
+  # Run schema migrations exactly once before API/worker startup.
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend.Dockerfile
+    image: agentforge-api:dev
+    container_name: agentforge-migrate
+    command: ["python", "-c", "import asyncio; from app.database import init_db; asyncio.run(init_db())"]
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      <<: *common-env
+      AGENTFORGE_RUN_MIGRATIONS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - agentforge-net
+
   # ─── 1. FastAPI backend (the brain) ─────────────────────────
   agentforge-api:
     build:
@@ -66,6 +89,7 @@ services:
         required: false
     environment:
       <<: *common-env
+      AGENTFORGE_RUN_MIGRATIONS: "false"
     volumes:
       # Persist uploaded files across restarts (PostgreSQL has its own volume).
       - ./data:/app/data
@@ -83,12 +107,16 @@ services:
       retries: 5
       start_period: 10s
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       agentforge-sandbox:
         condition: service_started
       qdrant:
         condition: service_started
+      redis:
+        condition: service_healthy
     networks:
       - agentforge-net
 
@@ -97,27 +125,14 @@ services:
     build:
       context: ./frontend
       dockerfile: ../docker/frontend.Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-/api}
+        VITE_API_TOKEN: ${AGENTFORGE_API_TOKEN:-}
     image: agentforge-frontend:dev
     container_name: agentforge-frontend
     restart: unless-stopped
-    environment:
-      # Vite reads VITE_* at build time.  The default points at the
-      # api's unversioned `/api/...` alias (see backend/app/main.py).
-      # Set VITE_API_BASE in your shell to override (e.g. to a
-      # non-localhost host when running the browser on a different
-      # machine than the stack).
-      VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8000/api}
-      VITE_API_TOKEN: ${AGENTFORGE_API_TOKEN:-}
-    # Bind-mount the source tree so that edits on the Windows host
-    # are picked up by Vite HMR *immediately* (no `docker compose
-    # up --build` round-trip).  node_modules and the Vite cache
-    # are kept inside the image via the named anon-volume below so
-    # the host tree stays clean.
-    volumes:
-      - ./frontend/src:/app/src
-      - /app/node_modules
     ports:
-      - "5173:5173"
+      - "5173:80"
     depends_on:
       agentforge-api:
         condition: service_healthy
@@ -156,6 +171,68 @@ services:
       - agentforge-net
     command: ["python", "-c", "print('AgentForge sandbox template image ready')"]
 
+  # Redis: Celery broker plus cross-worker controls and pub/sub.
+  redis:
+    image: redis:7-alpine
+    container_name: agentforge-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - agentforge-net
+
+  # Durable execution happens here, not in API BackgroundTasks.
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend.Dockerfile
+    image: agentforge-api:dev
+    container_name: agentforge-celery-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      <<: *common-env
+    volumes:
+      - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      agentforge-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - agentforge-net
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend.Dockerfile
+    image: agentforge-api:dev
+    container_name: agentforge-celery-beat
+    restart: unless-stopped
+    command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=INFO"]
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      <<: *common-env
+    depends_on:
+      agentforge-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - agentforge-net
+
   # ─── 4. PostgreSQL (durable application state) ──────────────
   postgres:
     image: postgres:16-alpine
@@ -188,6 +265,8 @@ services:
       - agentforge-net
 
 volumes:
+  redis-data:
+    name: agentforge-redis-data
   postgres-data:
     name: agentforge-postgres-data
   qdrant-data:

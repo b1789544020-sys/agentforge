@@ -32,6 +32,7 @@ is:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, Iterable, Optional
 
@@ -59,6 +60,8 @@ class RunBroadcaster:
         # so contention is not a concern for a FastAPI process.
         self._channels: dict[str, _RunChannel] = {}
         self._lock = asyncio.Lock()
+        self._redis_task: asyncio.Task[None] | None = None
+        self._pubsub: Any = None
 
     async def subscribe(
         self,
@@ -111,7 +114,7 @@ class RunBroadcaster:
         Non-blocking: full queues are dropped (and logged at INFO
         level once) so a slow client cannot stall the agent loop.
         """
-        self._fanout(run_id, payload, event="run.step")
+        self._dispatch(run_id, payload, event="run.step")
 
     def publish_complete(self, run_id: str, payload: dict[str, Any]) -> None:
         """Fan a terminal event out (caller picks the event name).
@@ -121,7 +124,68 @@ class RunBroadcaster:
         terminated) and ``run.error`` shapes -- the broadcaster stays
         payload-only so both fit through the same call.
         """
-        self._fanout(run_id, payload, event=None)
+        self._dispatch(run_id, payload, event=None)
+
+    @staticmethod
+    def _redis_enabled() -> bool:
+        from app.config import get_settings
+
+        return get_settings().control_backend == "redis"
+
+    def _dispatch(self, run_id: str, payload: dict[str, Any], event: Optional[str]) -> None:
+        if not self._redis_enabled():
+            self._fanout(run_id, payload, event=event)
+            return
+        message = dict(payload) if event is None else {"event": event, **payload}
+        try:
+            asyncio.get_running_loop().create_task(self._publish_redis(run_id, message))
+        except RuntimeError:
+            self._fanout(run_id, payload, event=event)
+
+    async def _publish_redis(self, run_id: str, message: dict[str, Any]) -> None:
+        try:
+            from app.infra.redis import get_redis
+
+            await get_redis().publish(f"agentforge:run:{run_id}", json.dumps(message, default=str))
+        except Exception:
+            logger.exception("Redis run event publish failed run_id=%s", run_id)
+
+    async def start(self) -> None:
+        """Receive events produced by other API/Celery workers."""
+        if not self._redis_enabled() or (self._redis_task and not self._redis_task.done()):
+            return
+        self._redis_task = asyncio.create_task(self._redis_listener())
+
+    async def _redis_listener(self) -> None:
+        from app.infra.redis import get_redis
+
+        self._pubsub = get_redis().pubsub()
+        await self._pubsub.psubscribe("agentforge:run:*")
+        try:
+            while True:
+                message = await self._pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0
+                )
+                if message is None:
+                    await asyncio.sleep(0.05)
+                    continue
+                try:
+                    payload = json.loads(message["data"])
+                    run_id = message["channel"].rsplit(":", 1)[-1]
+                    self._fanout(run_id, payload, event=None)
+                except (TypeError, ValueError, KeyError):
+                    logger.warning("Ignoring malformed Redis run event: %r", message)
+        finally:
+            await self._pubsub.close()
+
+    async def stop(self) -> None:
+        if self._redis_task is not None:
+            self._redis_task.cancel()
+            try:
+                await self._redis_task
+            except asyncio.CancelledError:
+                pass
+            self._redis_task = None
 
     def _fanout(
         self,

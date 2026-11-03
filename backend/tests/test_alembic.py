@@ -97,6 +97,7 @@ def test_alembic_upgrade_creates_all_tables(sqlite_file: Path) -> None:
         cn.close()
     assert "config" in run_columns
     assert "priority" in eval_columns
+    assert "request" in eval_columns
 
 
 def test_alembic_downgrade_drops_everything(sqlite_file: Path) -> None:

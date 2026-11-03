@@ -1,22 +1,18 @@
-# ── AgentForge frontend (Vite dev server) image ──────────────
-# Build context: ./frontend
-# Built by docker compose; for production build a static bundle and
-# serve it with nginx instead.
-
-FROM node:20-alpine
-
+# Production static build + Nginx reverse proxy for HTTP and WebSocket.
+FROM node:20-alpine AS build
 WORKDIR /app
-
-# Layer 1: install dependencies first to maximize docker cache.
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
-
-# Layer 2: copy the rest of the source.
 COPY . .
+ARG VITE_API_BASE=/api
+ARG VITE_API_TOKEN=
+ENV VITE_API_BASE=${VITE_API_BASE} VITE_API_TOKEN=${VITE_API_TOKEN}
+RUN npm run typecheck && npm run build
 
-# Vite dev server listens on 0.0.0.0:5173.
-EXPOSE 5173
-
-# `--host 0.0.0.0` makes the dev server reachable from outside the
-# container; the `--` is needed so npm forwards the flags verbatim.
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+FROM nginx:1.27-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80
+HEALTHCHECK --interval=15s --timeout=3s --retries=5 \
+  CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1
+CMD ["nginx", "-g", "daemon off;"]

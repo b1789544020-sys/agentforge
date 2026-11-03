@@ -52,6 +52,8 @@ dependencies = [
     # Async / HTTP
     "httpx==0.28.1",
     "aiohttp==3.11.10",
+    "celery[redis]==5.4.0",
+    "redis==5.2.1",
     # Sandbox
     "docker==7.1.0",
     # Auth

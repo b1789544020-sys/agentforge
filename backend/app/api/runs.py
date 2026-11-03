@@ -17,6 +17,7 @@ from app.agent.loop import AgentLoop, LoopConfig, LoopResult
 from app.api.schemas import EvalRunOut, RunCreate, RunEvalCreate, RunOut, RunSummary
 from app.api.ws_broadcaster import broadcaster
 from app.database import async_session_factory, get_session
+from app.dispatch import submit_eval, submit_resume, submit_run
 from app.models import Agent, EvalCase, EvalRun, Run, Step, RUN_STATUS_PAUSED, RUN_STATUS_RUNNING
 
 router = APIRouter(prefix="/agents/{agent_id}/runs", tags=["runs"])
@@ -205,7 +206,7 @@ async def create_run(
     await session.refresh(run)
 
     if payload.async_run:
-        background.add_task(_execute_run, run.id, agent_id, payload.input, payload.session_id)
+        submit_run(run.id, agent_id, payload.input, payload.session_id, background)
         return _serialize_run(run, [])
 
     result = await _execute_run(run.id, agent_id, payload.input, payload.session_id)
@@ -262,55 +263,16 @@ async def evaluate_existing_run(
         dataset=f"run:{run_id}",
         scorer=payload.scorer_name,
         pass_threshold=payload.pass_threshold,
+        request=json.dumps({
+            "kind": "source_run", "source_run_id": run_id, "case_id": case_id,
+            "expected": payload.expected, "max_concurrency": payload.max_concurrency,
+        }, ensure_ascii=False),
         total=1,
         status="pending",
     )
     session.add(placeholder)
     await session.commit()
-    cancel_event = eval_control.register(eval_id)
-
-    async def _execute() -> None:
-        from app.eval.runner import EvalRunner
-
-        try:
-            async with async_session_factory() as inner:
-                agent = await inner.get(Agent, agent_id)
-                if agent is None:
-                    return
-                try:
-                    snapshot = json.loads(source.config or "{}")
-                except (TypeError, ValueError):
-                    snapshot = {}
-                eval_agent = Agent(
-                    id=agent.id, name=agent.name, description=agent.description,
-                    system_prompt=agent.system_prompt,
-                    model=snapshot.get("model") or agent.model,
-                    provider=agent.provider,
-                    temperature=snapshot.get("temperature", agent.temperature),
-                    max_steps=snapshot.get("max_steps", agent.max_steps),
-                    tools=agent.tools, config=agent.config,
-                )
-                runner = EvalRunner(
-                    inner, eval_agent,
-                    scorer=None if isinstance(scorer, EvalScorer) else scorer,
-                    pass_threshold=payload.pass_threshold,
-                    max_concurrency=payload.max_concurrency,
-                    session_factory=async_session_factory,
-                    cancel_event=cancel_event,
-                )
-                if isinstance(scorer, EvalScorer):
-                    await runner.run_eval(
-                        [case_id], scorer=scorer, dataset=f"run:{run_id}", eval_run_id=eval_id
-                    )
-                else:
-                    await runner.run(
-                        [{"input": source.input, "expected": payload.expected}],
-                        dataset_name=f"run:{run_id}", eval_run_id=eval_id,
-                    )
-        finally:
-            eval_control.unregister(eval_id)
-
-    background.add_task(_execute)
+    submit_eval(eval_id, background)
     return serialize_eval(placeholder, [])
 
 
@@ -424,7 +386,7 @@ async def pause_run(
             detail=f"cannot pause run in status {run.status!r}",
         )
 
-    signalled = control.request_pause(run_id)
+    signalled = await control.request_pause_async(run_id)
     if not signalled:
         # Loop is not in this process — the run may be hosted on
         # another worker or already be in a terminal state.  We still
@@ -484,11 +446,9 @@ async def resume_run(
     # user clicked pause then resume very quickly), clear any
     # outstanding pause request so the next checkpoint isn't paused
     # again immediately.
-    control.clear_pause(run_id)
+    await control.clear_pause_async(run_id)
 
-    background.add_task(
-        _resume_run, run_id, agent_id, run.session_id, run.input
-    )
+    submit_resume(run_id, agent_id, background)
 
     steps = (
         await session.execute(

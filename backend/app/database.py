@@ -30,6 +30,7 @@ class Base(DeclarativeBase):
 _engine_kwargs: dict = {
     "echo": settings.db_echo,
     "future": True,
+    "pool_pre_ping": True,
 }
 _is_sqlite = settings.database_url.startswith("sqlite")
 if _is_sqlite and (
@@ -41,6 +42,8 @@ if _is_sqlite and (
 elif not _is_sqlite:
     _engine_kwargs["pool_size"] = settings.db_pool_size
     _engine_kwargs["max_overflow"] = settings.db_max_overflow
+    _engine_kwargs["pool_timeout"] = settings.db_pool_timeout_seconds
+    _engine_kwargs["pool_recycle"] = settings.db_pool_recycle_seconds
 
 async_engine = create_async_engine(settings.database_url, **_engine_kwargs)
 

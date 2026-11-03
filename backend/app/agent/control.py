@@ -28,7 +28,10 @@ removed so the dict does not grow without bound.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 # run_id -> AgentLoop instance
 _LOOP_REGISTRY: Dict[str, "object"] = {}
@@ -79,10 +82,67 @@ def clear_pause(run_id: str) -> bool:
     return True
 
 
+def _pause_key(run_id: str) -> str:
+    return f"agentforge:control:pause:{run_id}"
+
+
+async def request_pause_async(run_id: str) -> bool:
+    """Signal locally and persist a cross-worker pause request."""
+    local = request_pause(run_id)
+    from app.config import get_settings
+
+    if get_settings().control_backend != "redis":
+        return local
+    try:
+        from app.infra.redis import get_redis
+
+        await get_redis().set(_pause_key(run_id), "1", ex=24 * 3600)
+        return True
+    except Exception:
+        logger.exception("Redis pause request failed run_id=%s", run_id)
+        return local
+
+
+async def clear_pause_async(run_id: str) -> bool:
+    local = clear_pause(run_id)
+    from app.config import get_settings
+
+    if get_settings().control_backend != "redis":
+        return local
+    try:
+        from app.infra.redis import get_redis
+
+        await get_redis().delete(_pause_key(run_id))
+        return True
+    except Exception:
+        logger.exception("Redis pause clear failed run_id=%s", run_id)
+        return local
+
+
+async def pause_requested(run_id: str) -> bool:
+    event = _PAUSE_SIGNALS.get(run_id)
+    if event is not None and event.is_set():
+        return True
+    from app.config import get_settings
+
+    if get_settings().control_backend != "redis":
+        return False
+    try:
+        from app.infra.redis import get_redis
+
+        return bool(await get_redis().get(_pause_key(run_id)))
+    except Exception:
+        logger.exception("Redis pause check failed run_id=%s", run_id)
+        return False
+
+
 __all__ = [
     "register_run",
     "unregister_run",
     "get_loop",
     "request_pause",
     "clear_pause",
+    "request_pause_async",
+    "clear_pause_async",
+    "pause_requested",
 ]

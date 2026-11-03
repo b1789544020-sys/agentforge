@@ -55,6 +55,16 @@ class Settings(BaseSettings):
     db_echo: bool = False
     db_pool_size: int = 10
     db_max_overflow: int = 20
+    db_pool_timeout_seconds: int = 30
+    db_pool_recycle_seconds: int = 1800
+
+    # ---- Distributed execution ---------------------------------------
+    task_backend: Literal["memory", "celery"] = "memory"
+    control_backend: Literal["memory", "redis"] = "memory"
+    redis_url: str = "redis://localhost:6379/0"
+    celery_task_time_limit_seconds: int = 3600
+    run_recovery_enabled: bool = True
+    run_migrations: bool = True
 
     @model_validator(mode="after")
     def _derive_sync_url(self) -> "Settings":
