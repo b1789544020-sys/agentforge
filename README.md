@@ -6,6 +6,8 @@ AgentForge 是一个端到端的 **LLM Agent 工作台**。你可以在网页上
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)]() [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)]() [![Docker compose](https://img.shields.io/badge/docker--compose-v2-2496ed.svg)]() [![Version 0.1.3.dev0](https://img.shields.io/badge/version-0.1.3.dev0-blue.svg)](CHANGELOG.md)
 
+> **生产改造文档**：见 [生产部署与运维手册](docs/PRODUCTION.md) 和 [性能验证计划](docs/PERFORMANCE.md)。离线测试通过不代表 Docker、真实 Provider、真实 embedding、容器沙箱或压测已验收；未完成项在手册中逐项列明。
+
 ---
 
 ## 目录 · Table of contents
@@ -28,6 +30,8 @@ AgentForge 是一个端到端的 **LLM Agent 工作台**。你可以在网页上
 - [🇨🇳 项目实际是什么](docs/这个项目实际是什么.md) — 它能干什么、对谁有用
 - [🇨🇳 零基础入门](docs/从零读懂%20agentforge（含操作步骤）.md) — 网页点击全程
 - [🎬 项目演示](docs/demo.md) — 真实 mock 运行的操作视频与关键截图
+- [🚀 生产部署与运维](docs/PRODUCTION.md) — 启动、备份、回滚、隔离与验收边界
+- [📈 性能验证](docs/PERFORMANCE.md) — short/ramp/spike/soak 与大数据评测
 
 ---
 
@@ -38,10 +42,10 @@ AgentForge 是一个端到端的 **LLM Agent 工作台**。你可以在网页上
 | **可观测的 Agent 循环** | 每一步都落到数据库，查询/暂停/恢复/取消都可以 |
 | **10 个内置工具** | `echo` / `now` / `calculator` / `python_eval` / `http_request` / `shell_exec` / `file_read` / `file_write` / `search_knowledge` / `final_answer`，用 `@tool()` 装饰器一行注册 |
 | **长期记忆** | exact match + cosine similarity 双路径，记住你以前告诉他的任何东西 |
-| **安全小黑屋** | `shell_exec` 默认子进程隔离；设为 `docker` 后切到 Docker 容器 |
+| **安全小黑屋** | 危险工具默认关闭；`SANDBOX_REQUIRED=true` 时强制非 root 只读 Docker 容器，禁止宿主降级 |
 | **批量评测** | 一道接口提交，后台跑完给出 pass / fail 、平均分、工具准确率 |
-| **5 个 LLM provider** | `mock`（本地模拟，免费）/ `openai` / `anthropic` / `deepseek` / `qwen`，换个 env 变量就能切（Anthropic 走专用 `AnthropicClient`，其他四个走 OpenAI 兼容路径） |
-| **本地一键起** | `docker compose up --build` 启动 API + 前端，不依赖云服务 |
+| **8 个 LLM provider** | `mock` / `openai` / `anthropic` / `deepseek` / `qwen` / `kimi` / `glm` / `doubao`；真实调用需要各厂商 key |
+| **本地一键起** | Compose 启动 PostgreSQL/Qdrant/Redis、migration、API、Celery、Nginx 前端与沙箱模板 |
 | **可生长** | 工具、评分函数、记忆策略都是插件式，加个函数就能扩展 |
 
 ---

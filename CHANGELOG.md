@@ -11,6 +11,8 @@ project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Production readiness stages 0–5.** Immutable Run/Eval snapshots and correct max-step termination; Qdrant and pluggable Chinese embeddings; additional LLM providers; unified evaluation, memory search and versioned Jinja prompts; Redis/Celery durable execution and cross-worker controls; JWT users/RBAC ownership; mandatory Docker sandbox options; JSON request logs, readiness/metrics, backup/restore and bounded load-test scripts. See `docs/PRODUCTION.md` for external acceptance items that remain unverified.
+
 - **Tool risk badge in trace UI (#9).**  Every `tool_call` step now
   carries the calling tool's `risk` class on the wire (read from
   `ToolRegistry.spec(name).risk` in the agent loop, written to

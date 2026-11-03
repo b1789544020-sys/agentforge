@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.auth import require_agent_access, require_api_token
+from app.api.auth import require_admin, require_agent_access, require_api_token
 from app.api.agents import (
     memory_router,
     router as agents_router,
@@ -25,6 +25,13 @@ from app.api.ws_broadcaster import broadcaster
 from app.config import get_settings
 from app.database import AsyncSessionLocal, init_db
 from app.memory.cleanup import schedule_periodic_cleanup
+from app.observability import (
+    configure_logging,
+    metrics,
+    readiness_payload,
+    readiness_response,
+    request_context_middleware,
+)
 
 logger = logging.getLogger("agentforge")
 settings = get_settings()
@@ -90,6 +97,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Application factory."""
+    configure_logging(settings.log_level)
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
@@ -98,6 +106,7 @@ def create_app() -> FastAPI:
     )
 
     # ---- Middleware ----
+    app.middleware("http")(request_context_middleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -140,6 +149,30 @@ def create_app() -> FastAPI:
             "auth_enabled": settings.auth_enabled or bool(settings.api_token),
         }
 
+    @app.get("/health/live", tags=["meta"])
+    async def live() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/health/ready", tags=["meta"])
+    @app.get("/api/health/ready", tags=["meta"])
+    @app.get(f"{settings.api_prefix}/health/ready", tags=["meta"])
+    async def ready() -> JSONResponse:
+        healthy, payload = await readiness_payload()
+        return readiness_response(healthy, payload)
+
+    @app.get("/api/metrics", tags=["meta"], dependencies=[Depends(require_api_token), Depends(require_admin)])
+    @app.get(f"{settings.api_prefix}/metrics", tags=["meta"], dependencies=[Depends(require_api_token), Depends(require_admin)])
+    async def instance_metrics() -> dict[str, Any]:
+        broker_depth = None
+        if settings.control_backend == "redis":
+            try:
+                from app.infra.redis import get_redis
+
+                broker_depth = await get_redis().llen("celery")
+            except Exception:
+                logger.exception("Failed to read Celery queue depth")
+        return metrics.snapshot(broker_depth)
+
     @app.get("/", tags=["meta"])
     async def root() -> dict[str, str]:
         return {
@@ -149,11 +182,17 @@ def create_app() -> FastAPI:
         }
 
     @app.exception_handler(Exception)
-    async def unhandled_exception_handler(_, exc: Exception) -> JSONResponse:
-        logger.exception("Unhandled exception: %s", exc)
+    async def unhandled_exception_handler(request, exc: Exception) -> JSONResponse:
+        request_id = getattr(request.state, "request_id", None)
+        logger.exception("Unhandled exception: %s", exc, extra={"request_id": request_id})
         return JSONResponse(
             status_code=500,
-            content={"detail": "Internal server error", "type": exc.__class__.__name__},
+            content={
+                "detail": "Internal server error",
+                "type": exc.__class__.__name__,
+                "request_id": request_id,
+            },
+            headers={"X-Request-ID": request_id} if request_id else None,
         )
 
     return app
