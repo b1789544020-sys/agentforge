@@ -1,52 +1,56 @@
-# `scripts/` — 脚本总览
+# `scripts/` — 验证、运维与离线工具
 
-> 这个文件夹里**只有"工具脚本"**，不是产品代码。
-> 产品代码在 `backend/` 和 `frontend/`。
->
-> 这里的脚本分两类：`tests/` 是**正经测试**，每次改完代码后可以跑一下验证；`diagnostics/` 是**一次性排查工具**，正常情况下用不到，遇到怪问题时再翻出来。
+产品代码位于 `backend/` 和 `frontend/`。本目录只保存辅助脚本，不是另一套产品实现。涉及真实服务、Docker、Provider 或压测的脚本必须在目标环境运行并保留输出，不能把“脚本存在”写成“已验收”。
 
----
+## 自动化与端到端验证
 
-## 📂 `scripts/tests/` — 5 个正经测试脚本
-
-跑测试前先确认：后端已经起来（`http://localhost:8000/health` 返 200），数据库已经建好。
-
-| 脚本 | 干啥 | 一句话命令 | 最近一次结果 |
-| --- | --- | --- | --- |
-| `smoke_test.py` | **烟雾测试**——一口气跑 create agent → run → eval → eval detail → memory → list tools，任何一步出现 4xx/5xx 就立刻在打印里看出 | `python scripts/tests/smoke_test.py` | **6/6 通过** |
-| `passing_eval.py` | **通过型评测**——用 `composite` scorer 跑一题，验证最终 `status=completed` 且 `passed>=1` | `python scripts/tests/passing_eval.py` | **1/1 passed** |
-| `list_expected.py` | **列表型 expected**——验证 `expected` 字段支持 `["hi","hello"]` 这种多答案列表 | `python scripts/tests/list_expected.py` | **2/2 passed** |
-| `eval_e2e.py` | **端到端评测**——一次跑两题（`hi`/`world`），观察 progress 轮询 → final 详情 | `python scripts/tests/eval_e2e.py` | 待跑 |
-| `poll_eval.py` | **轮询小工具**——对一个 hard-coded agent id（`6999e908-...`）的最近一次 eval 拉 `/progress` 40 次 | `python scripts/tests/poll_eval.py` | 工具脚本，不计分 |
-
-### ⚠️ 已知坑：两个脚本还在用废弃的 scorer 名
-
-`passing_eval.py` 和 `eval_e2e.py` 里都还写着 `scorer_name: "contains"`，但 **`contains` 早就从 `scorer.py::get_scorer` 移除了**（当前合法名字是 `default` / `composite` / `status` / `tool` / `answer`）。
-跑这两个脚本前**先把脚本里的 `contains` 改成 `composite`**，否则会拿到 422 报错。
-这一轮没改是因为：先把目录收拾干净，下一轮再批量修脚本。
-
----
-
-## 📂 `scripts/diagnostics/` — 7 个一次性排查小工具
-
-这些是**遇到问题时**才掏出来的工具，不是日常用的。**文件夹名已经写明"diagnostics"（诊断）**——别误以为是产品代码。
-
-| 脚本 | 干啥 | 什么时候用 |
+| 脚本 | 用途 | 命令 |
 | --- | --- | --- |
-| `backend_errors.py` | `docker logs --tail 2000 agentforge-api` 然后把含 `ASGI` 那一段（含前后 30 行上下文）打出来 | 后端 5xx 报错、想看 traceback 上下文 |
-| `debug_eval.py` | 用 4 种不同 body 形状去 POST `/api/v1/agents/{id}/evals`，看每种的 HTTP 状态码和返回 | 评测接口报 400/422、又说不清为啥 |
-| `find_init.py` | 在 `backend/app/` 里全文搜 `create_all` / `create_async` / `init_db` 等关键词 | 想知道 SQLite 表是在哪一行建的 |
-| `dump_slice.py` | 读一个 `.md` 文档的指定行号范围（`python dump_slice.py 700 750`） | 长文档定位某一段 |
-| `scan_doc.py` | 在操作说明文档里扫 `scorer_name`、API 路径等关键词，列出来带行号 | 检查文档里有没有**陈旧的接口/字段名** |
-| `scan_doc2.py` | `scan_doc.py` 的简化版，只关心 `/api/v1/runs/`、`scorer_name:"exact"` 几个高危 pattern | 同上，更快 |
-| `scorer_names.py` | 进 `agentforge-api` 容器 `grep` 一把 `scorer.py`，列出所有 scorer 名字 | 想确认 `get_scorer()` 当前到底支持哪些名字 |
+| `tests/quality_gate_e2e.py` | 隔离临时 DB 中验证首版全过、次版两条失败及 diff | `python scripts/tests/quality_gate_e2e.py` |
+| `tests/smoke_test.py` | 运行中服务的 Agent/Run/Eval/Memory/Tool 烟雾检查 | 先启动后端，再 `python scripts/tests/smoke_test.py` |
+| `tests/passing_eval.py` | 通过型评测示例 | `python scripts/tests/passing_eval.py` |
+| `tests/list_expected.py` | 多答案 expected 示例 | `python scripts/tests/list_expected.py` |
+| `tests/eval_e2e.py` | 评测 progress 到终态的演示 | `python scripts/tests/eval_e2e.py` |
+| `tests/poll_eval.py` | 轮询指定历史 Eval 的诊断工具 | 先按实际 ID 修改脚本，不纳入验收计数 |
+| `validation/verify_stack.py` | health/readiness + 一个真实 Agent 运行并输出 JSON 证据 | `python scripts/validation/verify_stack.py --output evidence/stack.json` |
 
-> 共同点：所有 diagnostic 脚本都**假设后端在 `localhost:8000`**（直接 `urllib` 调 API）。要远程用就把 `BASE` 改一下。
+主测试集仍以 `backend/tests/` 为准：
 
----
+```bash
+python -m pytest backend/tests -q
+python -m pytest backend/tests/test_direction1.py backend/tests/test_direction2.py \
+  backend/tests/test_direction3.py backend/tests/test_direction4.py backend/tests/test_direction5.py -q
+```
 
-## 怎么加新脚本？
+## 私有化与离线物料
 
-- 新的"产品级测试"（每次跑 CI 都要的）→ 放 `scripts/tests/`，**加进本表"正经测试"那张表**
-- 新的"临时排查工具"（用一次就丢的）→ 放 `scripts/diagnostics/`，**加进下面这张表**
-- 千万别往根目录丢 `.py` —— 根目录只放配置/编排文件（`.env`、`.gitignore`、`docker-compose.yml`）
+| 脚本 | 用途 |
+| --- | --- |
+| `offline/prepare.py` | 联网准备 wheel、npm cache、Docker image、源码和 SHA-256 manifest |
+| `offline/verify_bundle.py` | 离线包完整性与哈希校验 |
+| `offline/install.sh` | 目标 Linux 断网安装，`pip --no-index`、`npm --offline`、`docker load` |
+| `offline/start_standalone.py` | 同一应用的 SQLite + memory + inprocess 单进程启动 |
+| `security/secret_scan.py` | 扫描 tracked source 中疑似明文密钥，不打印匹配值 |
+
+```bash
+python scripts/offline/prepare.py dist/offline
+python scripts/security/secret_scan.py
+python scripts/validation/verify_stack.py --provider ollama \
+  --model qwen2.5:3b --endpoint http://ollama.internal:11434/v1
+```
+
+验证令牌只通过 `AGENTFORGE_VERIFY_TOKEN` 环境变量注入。物料必须匹配目标 OS、CPU 架构和 Python ABI。
+
+## 备份、恢复与性能
+
+- `backup.py` / `restore.py`：SQLite/PostgreSQL 备份恢复；恢复覆盖数据，先停止写入并显式确认。
+- `perf/locustfile.py`、`perf/k6-smoke.js`：short/ramp/spike/soak 有界压测。
+- `perf/large_eval.py`：大数据集评测。保留原始结果、队列、资源和 p95，不写无数据结论。
+
+详见 `docs/PRODUCTION.md`、`docs/PERFORMANCE.md` 和 `docs/OFFLINE.md`。
+
+## 一次性诊断
+
+`diagnostics/` 包含日志抓取、接口形状、文档关键词和 scorer 排查工具。它们可能假设 `localhost:8000` 或包含历史示例 ID，只用于人工诊断，不属于持续回归，也不应作为生产证据。
+
+新增脚本时：持续行为验证放 `tests/` 或 `validation/`，一次性排查放 `diagnostics/`，密钥不得硬编码；任何“最近一次结果”只有在真实执行并留存输出后才能更新。

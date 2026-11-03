@@ -49,11 +49,13 @@ docker compose stop agentforge-api celery-worker celery-beat agentforge-frontend
 
 完全停止（不要加 `-v`，否则删除数据库卷）：`docker compose down`。
 
-## 4. 用户与数据隔离
+## 4. 用户、团队与数据隔离
 
-首位注册用户是 admin，后续用户为 user。普通用户只能访问自己的 Agent 及其嵌套资源；静态 token 是兼容管理员主体，不应分发给普通用户。生产环境请使用用户 JWT，限制静态 token 的分发和访问路径。
+首位注册用户是 super-admin，后续为用户。通过 Organization → Team → Membership 分配 team-admin/developer/viewer。普通用户只能访问所属团队及本人旧个人空间的 Agent、Run、Eval、Memory、Suite、知识库、模板、交付和运营数据；跨团队猜测 ID 与 WebSocket 订阅同样拒绝。静态 token 是兼容管理员主体，不应分发给普通用户。
 
-危险工具默认关闭。开启前同时配置 `AGENTFORGE_FILE_ALLOWED_DIRS`、`AGENTFORGE_HTTP_ALLOWED_HOSTS`，并保留 `AGENTFORGE_SANDBOX_REQUIRED=true`。Docker 不可用时应拒绝执行，禁止宿主降级。
+危险工具默认关闭。开启前配置 `AGENTFORGE_FILE_ALLOWED_DIRS`、`AGENTFORGE_HTTP_ALLOWED_HOSTS`，保留 `AGENTFORGE_SANDBOX_REQUIRED=true`，并走 ApprovalRequest 管理员授权；Docker 不可用时拒绝执行，禁止宿主降级。
+
+Agent config 中的模型密钥落库前加密。生产建议独立注入高熵 `AGENTFORGE_ENCRYPTION_KEY`，并与 JWT `AGENTFORGE_SECRET_KEY` 分别纳入密钥管理；API、导出和日志只保留脱敏值。团队、审计和审批详情见 `docs/TEAMS.md`，离线/密钥细节见 `docs/OFFLINE.md`。
 
 ## 5. 备份（每次升级前）
 
@@ -96,7 +98,7 @@ python scripts/backup.py --database-url "$AGENTFORGE_DATABASE_URL"
 - `/api/metrics` 提供实例 QPS、错误率、平均/p95 延迟、评测队列和 Celery broker 深度。多实例必须分别采集，不能把一个实例的值当全局值。
 - Run 每个完整迭代提交 RunState；恢复保留上下文、下一步、token、累计步数和时长。
 - Celery late-ack + worker-lost requeue + 每任务 Redis 锁提供 at-least-once 执行。Eval 中断重放会删除部分结果再跑，避免重复计数。
-- Beat 清理 TTL 记忆并标记超时任务。检查 worker 日志和队列后再决定是否人工重放。
+- Beat 清理 TTL 记忆并标记超时任务，扫描定时质量门禁并评估运营告警。检查 worker 日志和队列后再决定是否人工重放。
 
 ## 8. 上线前检查清单
 
