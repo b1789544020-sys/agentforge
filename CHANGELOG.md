@@ -11,6 +11,7 @@ project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Public delivery abuse controls.** Token/IP fixed-window limits run before JSON validation, with shared Redis counters for multi-worker mode, bounded process-memory development mode, fail-closed defaults, trusted-proxy CIDR parsing, 429/503 retry semantics, request bounds, no-store/security headers, configurable iframe `frame-ancestors`, and localized browser errors. Real Redis, Nginx and browser acceptance remains environment-specific.
 - **Version-locked delivery, templates, and private knowledge.** Passed/bypassed AgentVersions can be published into RuntimeSpec deployments with one-time independent tokens, REST/standalone/iframe delivery, stop/start, republish, rollback, revoke and rotation audits. Six built-in scenario templates plus versioned custom templates create runnable Agents and example cases. PDF/DOCX/TXT/Markdown ingestion adds Chinese section/sentence chunks, persistent embeddings, scoped vector search, Agent bindings and cited runtime context. Management UI and public chat pages are included; real browser and model-quality acceptance remain environment-specific.
 - **Operations, historical costs, feedback loop, and alerts.** Run data now powers team/agent/model/time metrics with failure/rejection/token/latency aggregation. Append-only effective-dated model prices provide historically consistent costs and unpriced-token reporting. Negative feedback preserves Run + AgentVersion context, converts to EvalCase and optionally joins a Suite. Failure-rate, daily-cost, error-spike and consecutive-gate rules create deduplicated in-app alert events; Celery Beat evaluation and an operations dashboard are included.
 - **Private/offline deployment and local inference.** Added per-Agent Ollama/vLLM/OpenAI-compatible endpoints, environment-keyed Fernet encryption for sensitive Agent config, API/export/log redaction, and a tracked-source secret scanner. `docs/OFFLINE.md`, `docs/XC_SUPPORT.md`, offline wheel/npm/Docker/source bundle scripts, hash verification, target evidence collection, and a SQLite/memory/inprocess single-process profile are included. Actual disconnected deployment, local models, and domestic OS/hardware remain explicitly unverified until target evidence is supplied.
@@ -173,6 +174,8 @@ project adheres to [Semantic Versioning](https://semver.org/).
   one-liner that delegates to `python_eval(expr, "simple")`.
 
 ### Changed
+- **Non-interactive Windows subprocesses use `stdin=DEVNULL`.** LocalSandbox, direct `shell_exec`, and Alembic CLI tests no longer inherit a potentially invalid service/console stdin handle. This preserves real process execution and timeouts while avoiding the observed `WinError 6`; it is not a claim that real Docker sandbox acceptance is complete.
+- **First-user authorization tests arrange their own database state.** The stage 4 bootstrap test clears shared in-memory rows locally instead of depending on test order or changing global SQLite teardown behavior.
 - `DELETE /api/agents/{agent_id}` and
   `DELETE /api/agents/{agent_id}/memory/{memory_id}` now return
   HTTP 204 No Content (no body) instead of HTTP 200 with a

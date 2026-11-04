@@ -151,6 +151,14 @@ class Settings(BaseSettings):
     file_allowed_dirs: list[str] = Field(default_factory=list)
     http_allowed_hosts: list[str] = Field(default_factory=list)
 
+    # Public delivery: zero disables rate limiting. ``auto`` uses Redis when
+    # the distributed control backend is enabled, otherwise process memory.
+    delivery_rate_limit_requests: int = Field(default=60, ge=0, le=1_000_000)
+    delivery_rate_limit_window_seconds: int = Field(default=60, ge=1, le=86_400)
+    delivery_rate_limit_backend: Literal["auto", "memory", "redis"] = "auto"
+    delivery_rate_limit_fail_closed: bool = True
+    delivery_trusted_proxies: list[str] = Field(default_factory=list)
+
     # ---- Auth --------------------------------------------------------
     secret_key: str = "change-me-in-production-please"
     encryption_key: str | None = None

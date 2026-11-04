@@ -327,6 +327,7 @@ class LocalSandbox:
                 "-S",
                 "-c",
                 wrapped,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -381,6 +382,7 @@ class LocalSandbox:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd_list,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -397,6 +399,7 @@ class LocalSandbox:
                 try:
                     proc = await asyncio.create_subprocess_exec(
                         *fallback,
+                        stdin=asyncio.subprocess.DEVNULL,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                         cwd=cwd,

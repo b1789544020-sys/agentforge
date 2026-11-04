@@ -267,10 +267,10 @@ git diff --check
 
 本轮实际验证状态：
 
-- 全量测试集 **342 项已分组执行**；五个方向的 **19 项专项测试全部通过**。
+- 全量测试集 **347 项已在一次完整运行中全部通过（43.98 秒）**；五个方向的 **19 项专项测试全部通过**，新增公开交付安全测试 5 项。
 - Alembic `0001`～`0011` 直接 CLI 完成 `upgrade head → downgrade base → upgrade head`，head 为 `e14bc78a209f`。
 - 前端 TypeScript 检查和生产构建通过；secret 扫描无发现；Python 编译和 `git diff --check` 通过。
-- Windows/Python 3.14 下部分 Alembic/LocalSandbox 子进程测试出现间歇性 `WinError 6/50`。业务失败已分别复查，但这不等于真实 Docker 沙箱或一次无异常全量运行验收。
+- Windows/Python 3.14 的非交互 LocalSandbox、`shell_exec` 与 Alembic CLI 已显式使用 `stdin=DEVNULL`；此前 `WinError 6` 用例复测通过，完整回归无业务失败。该结果不等于真实 Docker 沙箱或其他 Windows 宿主/句柄场景验收。
 - 没有实测性能数据；不得用 mock 延迟代替真实 Provider 压测结果。
 
 常用运维命令：
@@ -304,10 +304,10 @@ python scripts/perf/large_eval.py --count 100 --concurrency 4
 ## 尚需目标环境验收 / 未处理问题
 
 - Docker Compose 全栈实启、卷保留重启、PostgreSQL/Redis/Qdrant 连通和真实多 worker 隔离。
-- 真实 Docker 沙箱的非 root、只读、断网、资源限制及禁止宿主降级；本地 Windows 子进程稳定性问题仍需处理。
+- 真实 Docker 沙箱的非 root、只读、断网、资源限制及禁止宿主降级；其他 Windows 宿主/句柄场景仍需持续观察。
 - 真实云端 Provider、Ollama/vLLM 对话、`bge-small-zh` 中文检索质量和人工抽查。
 - 完全断网安装、麒麟/UOS/ARM/昇腾/寒武纪目标组合；当前没有“已验证”信创记录。
-- 三种交付形态的真实浏览器操作、公网 token 限流、CSP `frame-ancestors` 和速率策略。
+- 三种交付形态的真实浏览器操作，以及真实 Redis 多 worker 限流、受信代理链、Nginx 配置渲染和 CSP `frame-ancestors` 白名单验收。
 - PDF 扫描件 OCR、复杂表格、超大文档异步切片、运营大数据预聚合和财务对账。
 - 外部 webhook 告警、PostgreSQL `pg_dump/pg_restore` 演练，以及 short/ramp/spike/soak 实测 p95/错误率/资源指标。
 

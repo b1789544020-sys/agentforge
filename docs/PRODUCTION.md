@@ -9,6 +9,7 @@
 - 本地 `bge-small-zh` 模型加载与中文检索质量；hashing 只是确定性降级，不是语义模型。
 - Kimi、GLM、豆包、OpenAI、Anthropic 等真实 Provider 的 API key、配额、模型名和连通性。
 - 短基线、ramp、spike、soak 压测与大数据评测指标。
+- 真实 Redis 多 worker 公开交付限流、受信代理网段、Nginx CSP 渲染和浏览器 iframe 行为；离线共享计数替身不能替代这些验收。
 
 ## 2. 环境准备
 
@@ -107,5 +108,6 @@ python scripts/backup.py --database-url "$AGENTFORGE_DATABASE_URL"
 - [ ] 两个用户及 WebSocket 的跨租户越权复核通过。
 - [ ] 真实 Docker 沙箱断网/只读/资源限制复核通过。
 - [ ] 真实 embedding 与所有启用的 Provider 连通通过。
+- [ ] 公开交付在真实 Redis 多 worker 下按 token/IP 限流，代理 CIDR 与 CSP 白名单已收敛，Nginx `nginx -t` 和浏览器三形态通过。
 - [ ] 压测达到书面 p95、错误率和资源上限目标。
 - [ ] 备份异地保存且恢复演练通过。

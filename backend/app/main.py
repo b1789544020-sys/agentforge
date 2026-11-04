@@ -30,6 +30,7 @@ from app.api.ws import router as ws_router
 from app.api.ws_broadcaster import broadcaster
 from app.config import get_settings
 from app.database import AsyncSessionLocal, init_db
+from app.delivery_security import DeliveryRateLimiter, delivery_security_middleware
 from app.memory.cleanup import schedule_periodic_cleanup
 from app.observability import (
     configure_logging,
@@ -112,6 +113,8 @@ def create_app() -> FastAPI:
     )
 
     # ---- Middleware ----
+    app.state.delivery_rate_limiter = DeliveryRateLimiter.from_settings(settings)
+    app.middleware("http")(delivery_security_middleware)
     app.middleware("http")(request_context_middleware)
     app.add_middleware(
         CORSMiddleware,

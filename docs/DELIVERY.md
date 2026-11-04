@@ -24,7 +24,22 @@
 <iframe src="https://agentforge.example/embed/TOKEN" title="AI 助手"></iframe>
 ```
 
-生产环境应把交付 token 当密码管理，使用 HTTPS、限制嵌入方 `frame-ancestors`/CSP 和调用速率。当前未实现按 token 限流与 CSP 白名单，不能宣称公网安全验收完成。访问日志会隐藏 token 路径段。
+生产环境应把交付 token 当密码管理并使用 HTTPS。当前已实现以下入口保护：
+
+- 默认每个 token、每个客户端 IP 各 `60 次/60 秒`，两个预算同时生效；超限返回 `429`、`Retry-After` 和 `X-RateLimit-*`。正常及参数校验失败请求都计数，避免用无效 JSON 绕过限流。
+- `AGENTFORGE_DELIVERY_RATE_LIMIT_REQUESTS` / `_WINDOW_SECONDS` 调整窗口，请求数设为 `0` 可显式关闭。`AGENTFORGE_DELIVERY_RATE_LIMIT_BACKEND=auto` 在 Redis control 模式使用原子 Redis 固定窗口，否则使用进程内存；内存模式仅供单进程开发，不能用于多 worker 计数。
+- Redis 异常默认 fail-closed 并返回 `503`；只有显式设置 `AGENTFORGE_DELIVERY_RATE_LIMIT_FAIL_CLOSED=false` 才临时放行。固定窗口在窗口边界可能允许约两倍突发，不是精确滑动窗口、计费配额或完整 DDoS 防护。
+- token 和 IP 仅以带用途前缀的 SHA-256 摘要进入限流 key，不写入明文。`AGENTFORGE_DELIVERY_TRUSTED_PROXIES` 默认空，只信任直接连接地址；只有真实代理 IP/CIDR 链受信时才从右向左解析 `X-Forwarded-For`。使用 Nginx/负载均衡时必须配置实际代理网段，否则多个终端可能共享代理 IP 预算。
+- API 返回 `Cache-Control: no-store`、`nosniff`、`Referrer-Policy: no-referrer`；访问日志隐藏 token 路径段。输入上限为 32,000 字符，`session_id` 上限 128 字符，公开页面会解释 429/503/吊销/停用状态。
+
+Nginx 对 `/deliver/*` 和 `/embed/*` 设置独立 CSP，管理 UI 默认 `frame-ancestors 'none'`。iframe 父页面通过 `AGENTFORGE_FRAME_ANCESTORS` 配置，默认 `*` 仅用于兼容，公网应改为明确白名单，例如：
+
+```bash
+export AGENTFORGE_DELIVERY_TRUSTED_PROXIES='["10.20.0.0/16"]'
+export AGENTFORGE_FRAME_ANCESTORS="'self' https://portal.example.com"
+```
+
+代码与离线测试已完成，但当前工作区没有 Docker/Nginx，真实 Redis 跨 worker、Nginx 配置渲染、浏览器 CSP 和公网代理链仍需目标环境验收。
 
 ## 模板
 
@@ -43,7 +58,7 @@
 ## 验证
 
 ```bash
-python -m pytest backend/tests/test_direction5.py -q
+python -m pytest backend/tests/test_direction5.py backend/tests/test_delivery_security.py -q
 ```
 
-测试覆盖门禁拒绝、版本锁定、升级/回滚、启停/吊销/轮换、模板即建即跑、中文上传/切片/检索/运行时引用和 DOCX 解析。真实模型回答质量、真实浏览器三形态交互及公网部署安全仍需目标环境验收。
+测试覆盖门禁拒绝、版本锁定、升级/回滚、启停/吊销/轮换、模板即建即跑、中文上传/切片/检索/运行时引用、DOCX 解析，以及限流窗口/token/IP 隔离、受信代理、Redis 共享计数替身、故障关闭、429/503 和输入边界。真实 Redis/Nginx、模型回答质量、真实浏览器三形态交互及公网部署安全仍需目标环境验收。

@@ -14,10 +14,16 @@ from httpx import ASGITransport, AsyncClient
 from app import config as config_module
 from app.agent.sandbox import DockerSandbox, SandboxError, get_sandbox, reset_sandbox
 from app.main import create_app
+from app.database import Base, async_engine
 
 
 @pytest.mark.asyncio
 async def test_jwt_roles_and_agent_data_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
+    # This test specifically exercises first-user bootstrap. Earlier modules
+    # share the in-memory engine, so arrange an empty database explicitly.
+    async with async_engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            await conn.execute(table.delete())
     monkeypatch.setenv("AGENTFORGE_AUTH_ENABLED", "true")
     monkeypatch.setenv("AGENTFORGE_API_TOKEN", "")
     monkeypatch.setenv("AGENTFORGE_SECRET_KEY", "stage4-test-secret")

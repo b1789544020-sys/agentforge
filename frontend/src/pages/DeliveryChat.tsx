@@ -1,8 +1,26 @@
+import axios from "axios";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api/client";
 
 type Message = { role: "user" | "assistant"; content: string; traceId?: string };
+
+function deliveryError(reason: unknown): string {
+  if (axios.isAxiosError(reason)) {
+    const status = reason.response?.status;
+    const retryAfter = Number(reason.response?.headers["retry-after"]);
+    if (status === 429) {
+      return Number.isFinite(retryAfter) && retryAfter > 0
+        ? `请求过于频繁，请约 ${Math.ceil(retryAfter)} 秒后重试。`
+        : "请求过于频繁，请稍后重试。";
+    }
+    if (status === 503) return "交付服务暂时不可用，请稍后重试。";
+    if (status === 410) return "此交付链接已吊销，请联系发布方获取新链接。";
+    if (status === 403) return "此交付应用已停用，请联系发布方。";
+    if (status === 404) return "交付链接不存在或已失效。";
+  }
+  return reason instanceof Error ? reason.message : String(reason);
+}
 
 export default function DeliveryChat({ embedded = false }: { embedded?: boolean }) {
   const { token = "" } = useParams();
@@ -21,7 +39,7 @@ export default function DeliveryChat({ embedded = false }: { embedded?: boolean 
       const response = await api.post<{ output: string; trace_id: string }>(`/deliver/${token}/chat`, { input: question });
       setMessages((rows) => [...rows, { role: "assistant", content: response.data.output, traceId: response.data.trace_id }]);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setError(deliveryError(reason));
     } finally { setBusy(false); }
   };
 
@@ -38,7 +56,7 @@ export default function DeliveryChat({ embedded = false }: { embedded?: boolean 
       </main>
       {error && <div className="banner err" role="alert">{error}</div>}
       <form onSubmit={send} className="delivery-input">
-        <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入消息…" aria-label="输入消息" />
+        <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入消息…" aria-label="输入消息" maxLength={32_000} />
         <button type="submit" disabled={busy || !input.trim()}>发送</button>
       </form>
     </div>

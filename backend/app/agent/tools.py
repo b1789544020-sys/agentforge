@@ -980,6 +980,7 @@ async def shell_exec(command: str, **kwargs: Any) -> Dict[str, Any]:
         try:
             proc = await _asyncio.create_subprocess_exec(
                 *cmd_list,
+                stdin=_asyncio.subprocess.DEVNULL,
                 stdout=_asyncio.subprocess.PIPE,
                 stderr=_asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -996,6 +997,7 @@ async def shell_exec(command: str, **kwargs: Any) -> Dict[str, Any]:
                     "/c",
                     command,
                     *args_list,
+                    stdin=_asyncio.subprocess.DEVNULL,
                     stdout=_asyncio.subprocess.PIPE,
                     stderr=_asyncio.subprocess.PIPE,
                     cwd=cwd,

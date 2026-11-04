@@ -39,6 +39,7 @@ def _run_alembic(db_path: Path, *args: str) -> subprocess.CompletedProcess:
         [sys.executable, "-m", "alembic", *args],
         cwd=str(BACKEND),
         env=env,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
     )

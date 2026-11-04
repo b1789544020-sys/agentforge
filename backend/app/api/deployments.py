@@ -35,8 +35,8 @@ class DeploymentVersion(BaseModel):
 
 
 class ChatInput(BaseModel):
-    input: str = Field(min_length=1)
-    session_id: str | None = None
+    input: str = Field(min_length=1, max_length=32_000)
+    session_id: str | None = Field(default=None, max_length=128)
 
 
 def _json(value: str | None, fallback: Any) -> Any:
@@ -226,7 +226,9 @@ async def rotate(deployment_id: str, request: Request, session: AsyncSession = D
 
 
 @public_router.post("/api/deliver/{token}/chat")
-async def deliver_chat(token: str, payload: ChatInput, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def deliver_chat(
+    token: str, payload: ChatInput, session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
     row = (await session.execute(select(Deployment).where(Deployment.token_hash == _hash(token)))).scalar_one_or_none()
     if row is None:
         raise HTTPException(404, "deployment not found")
