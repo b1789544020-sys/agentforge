@@ -76,6 +76,7 @@ def test_alembic_upgrade_creates_all_tables(sqlite_file: Path) -> None:
 
     tables = _tables(sqlite_file)
     expected = {
+        "feedback_resolutions",
         "agents",
         "agent_runs",
         "agent_steps",
@@ -136,6 +137,7 @@ def test_alembic_downgrade_drops_everything(sqlite_file: Path) -> None:
 
     tables = _tables(sqlite_file)
     model_tables = {
+        "feedback_resolutions",
         "agents",
         "agent_runs",
         "agent_steps",
@@ -228,5 +230,72 @@ def test_alembic_current_reports_head(sqlite_file: Path) -> None:
         f"alembic current output did not contain any known revision\n"
         f"known_revs={sorted(known_revs)}\nout={out}"
     )
+
+
+def test_0012_preserves_legacy_rows_and_allows_old_inserts(sqlite_file: Path) -> None:
+    upgraded = _run_alembic(sqlite_file, "upgrade", "e14bc78a209f")
+    assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
+    cn = sqlite3.connect(str(sqlite_file))
+    try:
+        cn.execute(
+            "INSERT INTO agents (id,name,model,provider,temperature,max_steps,tools,config) "
+            "VALUES ('agent-legacy','legacy','mock','mock',0,2,'[]','{}')"
+        )
+        cn.execute(
+            "INSERT INTO agent_versions (id,agent_id,version_number,snapshot,model,provider,"
+            "temperature,max_steps) VALUES ('version-legacy','agent-legacy',1,'{}','mock','mock',0,2)"
+        )
+        cn.execute(
+            "INSERT INTO eval_suites (id,name,agent_id,case_ids) "
+            "VALUES ('suite-legacy','legacy','agent-legacy','[]')"
+        )
+        cn.execute(
+            "INSERT INTO agent_runs (id,agent_id,input,output,status,total_tokens,prompt_tokens,"
+            "completion_tokens,duration_ms,step_count) VALUES "
+            "('run-legacy','agent-legacy','old input','old output','success',0,0,0,0,0)"
+        )
+        details = '[{"case_id":"legacy","passed":true,"output":"old output"}]'
+        diff = '[{"case_id":"legacy","change":"unchanged"}]'
+        cn.execute(
+            "INSERT INTO gate_runs (id,agent_version_id,suite_id,status,details,diff) "
+            "VALUES ('gate-legacy','version-legacy','suite-legacy','passed',?,?)",
+            (details, diff),
+        )
+        cn.execute(
+            "INSERT INTO feedback (id,run_id,agent_id,rating,context_snapshot) "
+            "VALUES ('feedback-legacy','run-legacy','agent-legacy','negative','{\"input\":\"old input\"}')"
+        )
+        cn.commit()
+    finally:
+        cn.close()
+    migrated = _run_alembic(sqlite_file, "upgrade", "head")
+    assert migrated.returncode == 0, migrated.stdout + migrated.stderr
+    cn = sqlite3.connect(str(sqlite_file))
+    try:
+        run = cn.execute(
+            "SELECT output,quality_record_version,answer_output,tool_output,retrieval_output,"
+            "execution_output FROM agent_runs WHERE id='run-legacy'"
+        ).fetchone()
+        assert run == ("old output", None, None, None, None, None)
+        gate = cn.execute(
+            "SELECT details,diff,quality_record_version,conditions,evidence "
+            "FROM gate_runs WHERE id='gate-legacy'"
+        ).fetchone()
+        assert gate == (details, diff, None, None, None)
+        assert cn.execute(
+            "SELECT agent_version_id FROM feedback WHERE id='feedback-legacy'"
+        ).fetchone() == (None,)
+        # An old binary can still INSERT without knowing any of the additive columns.
+        cn.execute(
+            "INSERT INTO agent_runs (id,agent_id,input,output,status,total_tokens,prompt_tokens,"
+            "completion_tokens,duration_ms,step_count) VALUES "
+            "('run-old-binary','agent-legacy','new old input',NULL,'pending',0,0,0,0,0)"
+        )
+        cn.commit()
+        assert cn.execute(
+            "SELECT quality_record_version FROM agent_runs WHERE id='run-old-binary'"
+        ).fetchone() == (None,)
+    finally:
+        cn.close()
 
 

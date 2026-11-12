@@ -1,0 +1,88 @@
+﻿# Python 3.14 原 pin 安装失败摘录（非完整日志）
+# 原始退出码：1
+
+      running build_ext
+      building 'aiohttp._websocket.mask' extension
+      error: Microsoft Visual C++ 14.0 or greater is required. Get it with "Microsoft C++ Build Tools": https://visualstudio.microsoft.com/visual-cpp-build-tools/
+      [end of output]
+  
+  note: This error originates from a subprocess, and is likely not a problem with pip.
+  ERROR: Failed building wheel for aiohttp
+  Building wheel for pydantic-core (pyproject.toml): started
+  Building wheel for pydantic-core (pyproject.toml): finished with status 'error'
+  error: subprocess-exited-with-error
+  
+  脳 Building wheel for pydantic-core (pyproject.toml) did not run successfully.
+  鈹?exit code: 1
+  鈺扳攢> [57 lines of output]
+      Python reports SOABI: cp314-win_amd64
+      Computed rustc target triple: x86_64-pc-windows-msvc
+      Installation directory: <home>\AppData\Local\puccinialin\puccinialin\Cache
+      Rustup already downloaded
+      Installing rust to <home>\AppData\Local\puccinialin\puccinialin\Cache\rustup
+      warn: it looks like you have an existing rustup settings file at:
+      warn: <home>\AppData\Local\puccinialin\puccinialin\Cache\rustup\settings.toml
+      warn: installing msvc toolchain without its prerequisites
+      info: profile set to minimal
+      info: setting default host tuple to x86_64-pc-windows-msvc
+      warn: Updating existing toolchain, profile choice will be ignored
+      info: syncing channel updates for stable-x86_64-pc-windows-msvc
+      info: default toolchain set to stable-x86_64-pc-windows-msvc
+      Checking if cargo is installed
+      cargo 1.99.1 (5f94df478 2026-08-27)
+      Rust not found, installing into a temporary directory
+      Running `maturin pep517 build-wheel -i <venv-python314>\Scripts\python.exe --compatibility off`
+      棣冩憹 Including license file `LICENSE`
+      棣冨祼 Building a mixed python/rust project
+      棣冩倳 Found CPython 3.14 at <venv-python314>\Scripts\python.exe
+      棣冩晢 Found pyo3 bindings
+      棣冩憲 Using build options features, bindings from pyproject.toml
+         Compiling proc-macro2 v1.0.86
+         Compiling unicode-ident v1.0.12
+         Compiling target-lexicon v0.12.14
+         Compiling cc v1.0.101
+         Compiling once_cell v1.19.0
+         Compiling stable_deref_trait v1.2.0
+         Compiling autocfg v1.3.0
+         Compiling heck v0.5.0
+         Compiling version_check v0.9.5
+         Compiling writeable v0.5.5
+         Compiling litemap v0.7.3
+         Compiling libc v0.2.155
+         Compiling rustversion v1.0.17
+         Compiling radium v0.7.0
+      error: linker `link.exe` not found
+        |
+        = note: program not found
+      
+      note: the msvc targets depend on the msvc linker but `link.exe` was not found
+      
+      note: please ensure that Visual Studio 2017 or later, or Build Tools for Visual Studio were installed with the Visual C++ option
+      
+      note: VS Code is a different product, and is not sufficient
+      
+         Compiling static_assertions v1.1.0
+      error: could not compile `radium` (build script) due to 1 previous error
+      warning: build failed, waiting for other jobs to finish...
+      error: could not compile `proc-macro2` (build script) due to 1 previous error
+      error: could not compile `libc` (build script) due to 1 previous error
+      error: could not compile `rustversion` (build script) due to 1 previous error
+      error: could not compile `target-lexicon` (build script) due to 1 previous error
+      棣冩寽 maturin failed
+        Caused by: Failed to build a native library through cargo
+        Caused by: Cargo build finished with "exit code: 101": `"cargo" "rustc" "--profile" "release" "--features" "pyo3/extension-module" "--message-format" "json-render-diagnostics" "--manifest-path" "C:\\Users\\86159\\AppData\\Local\\Temp\\pip-install-at3nzf_v\\pydantic-core_94ea37b3372d4aa9aeb0806e6c6d8892\\Cargo.toml" "--lib" "--crate-type" "cdylib"`
+      Error: command ['maturin', 'pep517', 'build-wheel', '-i', 'C:\\Users\\86159\\Desktop\\agentforge\\.venv\\Scripts\\python.exe', '--compatibility', 'off'] returned non-zero exit status 1
+      [end of output]
+  
+  note: This error originates from a subprocess, and is likely not a problem with pip.
+  ERROR: Failed building wheel for pydantic-core
+Successfully built agentforge
+Failed to build tiktoken aiohttp pydantic-core
+
+[notice] A new release of pip is available: 26.1.2 -> 26.3
+[notice] To update, run: <venv-python314>\Scripts\python.exe -m pip install --upgrade pip
+error: failed-wheel-build-for-install
+
+脳 Failed to build installable wheels for some pyproject.toml based projects
+鈺扳攢> tiktoken, aiohttp, pydantic-core
+

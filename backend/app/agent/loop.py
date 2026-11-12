@@ -40,12 +40,15 @@ import traceback
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
+from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context import Context
+from app.agent.schema import missing_secret_refs
+from app.agent.versions import latest_agent_version
 from app.agent.tools import (
     ToolError,
     ToolExecutor,
@@ -56,6 +59,7 @@ from app.config import get_settings
 from app.llm.client import LLMClient, LLMResponse, MockLLMClient
 from app.models import (
     Agent,
+    KnowledgeBase,
     Run,
     Step,
     RUN_STATUS_RUNNING,
@@ -638,6 +642,7 @@ class AgentLoop:
         self._cancelled = asyncio.Event()
         self._pause = asyncio.Event()
         self._run: Optional[Run] = None
+        self._retrieval_observation: Optional[dict[str, Any]] = None
 
         # Pre-parse JSON columns on the agent for fast access.
         self._agent_tools: list[str] = _safe_json_loads(agent.tools, [])
@@ -755,6 +760,22 @@ class AgentLoop:
             **kwargs,
         )
 
+    async def _enforce_required_secrets(self) -> None:
+        snapshot = getattr(self.agent, "_runtime_snapshot", None)
+        if snapshot is None:
+            version = await latest_agent_version(self.session, self.agent.id)
+            if version is not None:
+                try:
+                    snapshot = json.loads(version.snapshot or "{}")
+                except (TypeError, ValueError):
+                    snapshot = {}
+        if not isinstance(snapshot, dict):
+            return
+        missing = missing_secret_refs(snapshot)
+        if missing:
+            refs = ", ".join(str(row["ref"]) for row in missing)
+            raise ValueError(f"missing required secrets: {refs}")
+
     # ---- main entry point -------------------------------------------
 
     async def run(
@@ -766,6 +787,7 @@ class AgentLoop:
         resume_state: Optional[RunState] = None,
     ) -> LoopResult:
         """Execute the agent loop.  See module docstring for details."""
+        await self._enforce_required_secrets()
         run = await self._get_or_create_run(
             run_id=run_id,
             user_input=user_input,
@@ -1062,12 +1084,21 @@ class AgentLoop:
         run.duration_ms = previous_duration_ms + duration_ms
         run.step_count = previous_step_count + len(steps)
         run.finished_at = datetime.utcnow() if not paused else None
+        if paused and run.state:
+            # The pause checkpoint is written inside the loop, before the final
+            # persistence work.  Use the final duration here so the checkpoint,
+            # Run row and LoopResult cannot disagree by a timing tick.
+            state = RunState.from_json(run.state)
+            state.duration_ms = run.duration_ms
+            run.state = state.to_json()
         if not paused:
             # clear state on terminal status
             try:
                 run.state = ""
             except Exception:  # pragma: no cover
                 pass
+        from app.quality.collector import write_run_quality
+        await write_run_quality(self.session, run, self._retrieval_observation)
         await _commit_with_retry(self.session)
 
         step_dicts = [_step_to_dict(s) for s in steps]
@@ -1188,9 +1219,20 @@ class AgentLoop:
         system_prompt = await resolve_system_prompt(self.session, self.agent, user_input)
         if system_prompt:
             ctx.add("system", system_prompt)
-        from app.knowledge import knowledge_context
+        from app.knowledge import knowledge_context_with_quality
         kb_ids = self._agent_config.get("knowledge_base_ids") if "knowledge_base_ids" in self._agent_config else None
-        retrieved = await knowledge_context(self.session, self.agent.id, user_input, kb_ids=kb_ids)
+        if isinstance(getattr(self.agent, "_runtime_snapshot", None), dict) and kb_ids:
+            stmt = select(KnowledgeBase.id).where(KnowledgeBase.id.in_(kb_ids))
+            if self.agent.team_id:
+                stmt = stmt.where(KnowledgeBase.team_id == self.agent.team_id)
+            else:
+                stmt = stmt.where(KnowledgeBase.team_id.is_(None))
+            available = set((await self.session.execute(stmt)).scalars().all())
+            if available != set(kb_ids):
+                raise ValueError("resource_unavailable: pinned knowledge base is missing or inaccessible")
+        retrieved, self._retrieval_observation = await knowledge_context_with_quality(
+            self.session, self.agent.id, user_input, kb_ids=kb_ids
+        )
         if retrieved:
             ctx.add("system", retrieved)
         ctx.add("user", user_input)

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "name": "security-agent",
+  "team_id": null,
+  "description": "recursive redaction fixture",
+  "system_prompt": "answer {{ input }}",
+  "model": "mock-model",
+  "provider": "mock",
+  "temperature": 0.2,
+  "max_steps": 4,
+  "tools": [],
+  "config": {
+    "providers": [
+      {
+        "name": "primary",
+        "api_key": "enc:v1:current-ciphertext",
+        "cipher_copy": "enc:v1:current-ciphertext"
+      }
+    ],
+    "nested": [{"token": "plain-fixture-secret"}],
+    "audit_copy": "plain-fixture-secret",
+    "unknown_cipher": "enc:v99:future-ciphertext",
+    "unset": null,
+    "zero": 0
+  },
+  "resources": {
+    "prompt": null,
+    "knowledge_bases": []
+  },
+  "memory": {}
+}

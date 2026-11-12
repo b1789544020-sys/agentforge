@@ -33,11 +33,25 @@
 
 调整阈值不会暗中改写原始用例结果；必须显式调用 `reevaluate`，响应会记录新阈值及重判状态。绕过只把版本状态改为 `bypassed`，不会把失败的 GateRun 伪装成通过。
 
+## 四层质量记录 v1（已实施）
+
+[16.10 四层质量数据模型 v1](planning/QUALITY_DATA_MODEL.md)的存储、执行采集、API 和 UI 已落地，migration head 为 `b72f41a9c012`（0012）。
+
+- **Run 原始观察**：`quality_record_version` 及可空 `answer_output/tool_output/retrieval_output/execution_output`。回答引用只关联实际注入的来源切片；工具记录来自持久化 Step；系统记录来自真实 Run 终态。重复 Provider call ID 会按调用顺序生成唯一映射，原始 Step 不丢失。
+- **Gate 判定**：创建时冻结用例快照、scorer、模型、解码和检索条件；终态保存逐 case `evidence`。默认必需 output/system，声明工具或知识检索时加入对应必需层。总分不能覆盖系统、工具或必需检索失败。
+- **层级 diff**：保留旧 `change/answer_diff`，新增两侧版本、Run/evidence ID、四层变化、条件哈希和 `comparison_status`。模型、套件、检索等未声明条件变化时标为 `conditions_changed`；legacy 证据不足时标为 `insufficient_evidence`，不伪装成 `fixed/unchanged`。
+- **旧记录兼容**：0011 行的质量列保持 `NULL`，Run/Gate 列表仍返回旧摘要且不加载大字段，详情才返回质量对象。`NULL` 表示 legacy/未采集，不表示通过。当前每案执行一次；契约中的多 attempt 结构不等于已实现多轮波动统计。
+- **反馈人工复核**：Feedback 固定 `Run.agent_version_id`。门禁 Run 的反馈转换会复用原 EvalCase；外部 Run 才新建用例。`GET/POST /operations/feedback/{id}/resolutions` 提供追加式人工记录，`confirmed_fixed` 要求原负面 Run 位于 comparable diff 的基线侧、当前全部 attempt 通过、对应用例和人工理由。自动 Gate 不会生成该结论。
+
+Run 观察与 Gate 判定在 UI 中分开展示。检索层当前断言“授权检索已完成”并保存候选/注入证据，不声称已经解决语义相关性、引用支持度或真实研究质量校准。
+
 ## 验证
 
 ```bash
 python -m pytest backend/tests/test_direction1.py -q
+python -m pytest backend/tests/test_quality_persistence.py backend/tests/test_feedback_resolution.py -q
 python scripts/tests/quality_gate_e2e.py
+python scripts/tests/quality_browser_e2e.py
 ```
 
 端到端脚本通过离线 `mock_replies` 真实经过 AgentLoop 和 EvalRunner：首版四用例全过，第二版两条失败，门禁结果为 50% 且 diff 精确标出两条 `new_failure`。这不是实际 Provider 效果验收。真实 Celery/Redis 调度、真实模型回归及生产浏览器操作仍需在目标环境验证。

@@ -25,7 +25,7 @@ The default factory :func:`default_scorer` returns a
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
@@ -119,6 +119,26 @@ class EvalScorer:
         self, result: AgentRunResult, test_case: TestCase
     ) -> EvalScore:  # pragma: no cover - interface
         raise NotImplementedError
+
+
+class MetricScorer(EvalScorer):
+    """Adapt a legacy ``metric(output, expected)`` callable to EvalScorer.
+
+    The callable interface is retained for inline/legacy evaluations, while
+    :meth:`score` lets quality gates use the same named metric without a
+    second scorer registry or subtly different semantics.
+    """
+
+    def __init__(self, name: str, metric: Callable[[str, Any], float]) -> None:
+        self.name = name
+        self._metric = metric
+
+    def __call__(self, prediction: str, expected: Any) -> float:
+        return float(self._metric(prediction, expected))
+
+    def score(self, result: AgentRunResult, test_case: TestCase) -> EvalScore:
+        value = self(result.output or "", test_case.expected_answer)
+        return EvalScore.from_score(value, metric=self.name)
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +363,7 @@ __all__ = [
     "AgentRunResult",
     "EvalScore",
     "EvalScorer",
+    "MetricScorer",
     "StatusScorer",
     "ToolScorer",
     "AnswerScorer",

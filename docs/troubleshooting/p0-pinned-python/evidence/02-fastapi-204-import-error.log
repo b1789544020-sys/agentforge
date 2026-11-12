@@ -1,0 +1,18 @@
+﻿# FastAPI 0.115.6 导入失败完整短日志
+
+ImportError while loading conftest '<repo>\backend\tests\conftest.py'.
+backend\tests\conftest.py:32: in <module>
+    from app.main import create_app  # noqa: E402
+backend\app\main.py:12: in <module>
+    from app.api.auth import require_admin, require_agent_access, require_api_token
+backend\app\api\__init__.py:7: in <module>
+    from app.api.tools_metadata import router as tools_metadata_router
+backend\app\api\tools_metadata.py:291: in <module>
+    @router.delete("/{name}/metadata", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])
+.scratch\runtime\venv-py312\Lib\site-packages\fastapi\routing.py:994: in decorator
+    self.add_api_route(
+.scratch\runtime\venv-py312\Lib\site-packages\fastapi\routing.py:933: in add_api_route
+    route = route_class(
+.scratch\runtime\venv-py312\Lib\site-packages\fastapi\routing.py:507: in __init__
+    assert is_body_allowed_for_status_code(
+E   AssertionError: Status code 204 must not have a response body

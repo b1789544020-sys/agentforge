@@ -10,12 +10,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.audit import record_audit
 from app.agent.versions import agent_from_version
+from app.audit import record_audit
 from app.database import async_session_factory
 from app.eval.runner import EvalRunner
 from app.eval.scorer import EvalScorer
 from app.models import Agent, AgentVersion, EvalCase, EvalRun, EvalSuite, GatePolicy, GateRun
+from app.quality.conditions import build_gate_conditions
+from app.quality.evidence import build_gate_evidence, enrich_case_diffs, validate_gate_record
 from app.rbac import eval_case_scope
 
 logger = logging.getLogger(__name__)
@@ -112,6 +114,7 @@ async def create_gate_run(
                GateRun.status.in_(["passed", "failed"]))
         .order_by(AgentVersion.version_number.desc(), GateRun.created_at.desc()).limit(1)
     )).scalars().first()
+    conditions = await build_gate_conditions(session, version, suite, float(threshold))
     eval_run = EvalRun(
         agent_id=version.agent_id, team_id=version.team_id, dataset=f"gate:{suite.name}", scorer=suite.scorer,
         pass_threshold=0.7, request=json.dumps({
@@ -125,6 +128,7 @@ async def create_gate_run(
         agent_version_id=version.id, suite_id=suite.id, eval_run_id=eval_run.id,
         baseline_gate_id=baseline.id if baseline else None, triggered_by=triggered_by,
         trigger_source=trigger_source, status="pending", threshold=float(threshold),
+        quality_record_version=1, conditions=json.dumps(conditions, ensure_ascii=False),
     )
     session.add(gate)
     await session.flush()
@@ -167,33 +171,44 @@ async def execute_gate(gate_run_id: str) -> None:
                 _json(suite.case_ids, []), scorer=scorer, pass_threshold=0.7,
                 dataset=eval_run.dataset, eval_run_id=eval_run.id,
             )
+            # EvalRunner expunges its bookkeeping session; reload exact records.
+            gate = await session.get(GateRun, gate_run_id)
+            suite = await session.get(EvalSuite, suite.id)
+            version = await session.get(AgentVersion, version.id)
+            if gate is None or suite is None or version is None:
+                raise ValueError("gate disappeared during execution")
+            conditions = _json(gate.conditions, {})
+            evidence = await build_gate_evidence(session, gate, result.cases, conditions)
+            by_case = {item["case_id"]: item for item in evidence}
             details = [{
                 "case_id": case.test_case_id, "result_case_id": case.case_id,
                 "input": case.input, "expected": case.expected_answer,
-                "output": case.output, "score": case.score, "passed": case.passed,
+                "output": case.output, "score": case.score,
+                "passed": by_case[case.test_case_id]["passed"],
                 "error": case.error, "duration_ms": case.duration_ms, "tokens": case.tokens,
+                "run_ids": [case.run_id], "attempt_count": 1,
+                "failed_layers": by_case[case.test_case_id]["failed_layers"],
             } for case in result.cases]
-            previous: list[dict[str, Any]] = []
-            if gate.baseline_gate_id:
-                baseline = await session.get(GateRun, gate.baseline_gate_id)
-                if baseline is not None:
-                    previous = _json(baseline.details, [])
-            # EvalRunner expunges its bookkeeping session; reload before updating.
-            gate = await session.get(GateRun, gate_run_id)
-            suite = await session.get(EvalSuite, suite.id)
-            if gate is None or suite is None:
-                raise ValueError("gate disappeared during execution")
-            pass_rate = result.passed / result.total if result.total else 0.0
+            baseline = await session.get(GateRun, gate.baseline_gate_id) if gate.baseline_gate_id else None
+            previous = _json(baseline.details, []) if baseline else []
+            previous_evidence = _json(baseline.evidence, []) if baseline else []
+            pass_rate = sum(1 for item in details if item["passed"]) / len(details) if details else 0.0
             gate.pass_rate = pass_rate
             gate.threshold = float(suite.pass_threshold)
             gate.failed_case_ids = json.dumps(
                 [item["case_id"] for item in details if not item["passed"]], ensure_ascii=False
             )
             gate.details = json.dumps(details, ensure_ascii=False)
-            gate.diff = json.dumps(build_case_diff(details, previous), ensure_ascii=False)
+            basic_diff = build_case_diff(details, previous)
+            diffs = enrich_case_diffs(
+                basic_diff, details, previous, gate, baseline, evidence, previous_evidence,
+            )
+            gate.diff = json.dumps(diffs, ensure_ascii=False)
+            gate.evidence = json.dumps(evidence, ensure_ascii=False)
             gate.status = "passed" if pass_rate >= gate.threshold else "failed"
             gate.finished_at = datetime.utcnow()
             gate.error = None
+            await validate_gate_record(session, gate, details, evidence, diffs)
             await session.flush()
             await _refresh_version_status(session, version.id)
             await session.commit()
@@ -282,6 +297,10 @@ async def execute_due_gates(now: datetime | None = None) -> list[str]:
 
 
 __all__ = [
-    "build_case_diff", "create_gate_run", "create_automatic_gates", "execute_gate",
-    "reevaluate_gate", "execute_due_gates",
+    "build_case_diff",
+    "create_automatic_gates",
+    "create_gate_run",
+    "execute_due_gates",
+    "execute_gate",
+    "reevaluate_gate",
 ]

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
@@ -14,8 +14,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_principal, require_admin
 from app.audit import record_audit
 from app.database import get_session
-from app.models import Agent, AgentVersion, AlertEvent, AlertRule, EvalCase, EvalSuite, Feedback, ModelPrice, Run
+from app.models import (
+    Agent,
+    AgentVersion,
+    AlertEvent,
+    AlertRule,
+    EvalCase,
+    EvalSuite,
+    Feedback,
+    FeedbackResolution,
+    GateRun,
+    ModelPrice,
+    Run,
+)
 from app.operations import aggregate_metrics, calculate_costs, evaluate_alert_rules
+from app.quality.feedback import (
+    FeedbackRecord,
+    validate_feedback_resolution,
+)
+from app.quality.feedback import (
+    FeedbackResolution as FeedbackResolutionContract,
+)
+from app.quality.gate import GateRecordV1
 from app.rbac import accessible_team_ids, authorize, scoped_agent_ids
 from app.secrets import redact_config
 
@@ -47,6 +67,13 @@ class FeedbackCreate(BaseModel):
 class FeedbackConvert(BaseModel):
     expected_answer: str = Field(min_length=1)
     suite_id: str | None = None
+
+
+class FeedbackResolutionCreate(BaseModel):
+    gate_run_id: str
+    case_id: str
+    verdict: Literal["needs_review", "confirmed_fixed", "not_fixed", "conditions_changed"]
+    note: str = Field(min_length=1, max_length=4000)
 
 
 class AlertRuleCreate(BaseModel):
@@ -159,7 +186,7 @@ async def create_price(payload: PriceCreate, request: Request, session: AsyncSes
 
 def _feedback_out(row: Feedback) -> dict[str, Any]:
     return {"id": row.id, "run_id": row.run_id, "agent_id": row.agent_id, "team_id": row.team_id,
-            "rating": row.rating, "expected_answer": row.expected_answer,
+            "agent_version_id": row.agent_version_id, "rating": row.rating, "expected_answer": row.expected_answer,
             "context_snapshot": redact_config(_json(row.context_snapshot, {})),
             "eval_case_id": row.eval_case_id, "suite_id": row.suite_id,
             "created_by": row.created_by, "created_at": row.created_at}
@@ -187,8 +214,11 @@ async def mark_feedback(payload: FeedbackCreate, request: Request, session: Asyn
     row = (await session.execute(select(Feedback).where(Feedback.run_id == run.id))).scalar_one_or_none()
     if row is None:
         row = Feedback(run_id=run.id, agent_id=run.agent_id, team_id=run.team_id,
+                       agent_version_id=run.agent_version_id,
                        created_by=get_principal(request).user_id, context_snapshot=json.dumps(context, ensure_ascii=False))
         session.add(row)
+    elif row.agent_version_id is None:
+        row.agent_version_id = run.agent_version_id
     row.rating = payload.rating
     row.expected_answer = payload.expected_answer
     await session.flush()
@@ -221,18 +251,40 @@ async def convert_feedback(feedback_id: str, payload: FeedbackConvert, request: 
         raise HTTPException(404, "feedback not found")
     if row.rating != "negative":
         raise HTTPException(400, "only negative feedback can become a regression case")
+    if row.eval_case_id:
+        raise HTTPException(409, "feedback has already been converted")
     context = _json(row.context_snapshot, {})
-    case = EvalCase(
-        id=str(uuid.uuid4()), agent_id=row.agent_id, owner_id=row.created_by, team_id=row.team_id,
-        dataset="feedback", name=f"feedback-{row.id[:8]}", input=str(context.get("input") or ""),
-        expected=payload.expected_answer, meta=json.dumps({"source_feedback_id": row.id,
-        "agent_version_id": context.get("agent_version_id")}, ensure_ascii=False),
-        tool_calls="[]", score_details="{}",
-    )
-    session.add(case)
+    source_case_id = None
+    source_suite_id = None
+    gate_rows = (await session.execute(
+        select(GateRun).join(AgentVersion, GateRun.agent_version_id == AgentVersion.id)
+        .where(AgentVersion.agent_id == row.agent_id)
+    )).scalars().all()
+    for gate in gate_rows:
+        for evidence in _json(gate.evidence, []) or []:
+            if evidence.get("run_id") == row.run_id:
+                source_case_id = evidence.get("case_id")
+                source_suite_id = gate.suite_id
+                break
+        if source_case_id:
+            break
+    case = await session.get(EvalCase, source_case_id) if source_case_id else None
+    if case is None:
+        case = EvalCase(
+            id=str(uuid.uuid4()), agent_id=row.agent_id, owner_id=row.created_by, team_id=row.team_id,
+            dataset="feedback", name=f"feedback-{row.id[:8]}", input=str(context.get("input") or ""),
+            expected=payload.expected_answer, meta=json.dumps({"source_feedback_id": row.id,
+            "agent_version_id": row.agent_version_id}, ensure_ascii=False),
+            tool_calls="[]", score_details="{}",
+        )
+        session.add(case)
+    else:
+        # Old Gate conditions remain immutable; only future suites see the correction.
+        case.expected = payload.expected_answer
     row.eval_case_id = case.id
-    if payload.suite_id:
-        suite = await session.get(EvalSuite, payload.suite_id)
+    suite_id = payload.suite_id or source_suite_id
+    if suite_id:
+        suite = await session.get(EvalSuite, suite_id)
         if suite is None or suite.team_id != row.team_id:
             raise HTTPException(404, "suite not found in this team")
         if suite.agent_id is not None and suite.agent_id != row.agent_id:
@@ -246,6 +298,102 @@ async def convert_feedback(feedback_id: str, payload: FeedbackConvert, request: 
                  team_id=row.team_id, detail={"feedback_id": row.id, "suite_id": row.suite_id})
     await session.commit()
     return {"feedback": _feedback_out(row), "eval_case_id": case.id, "suite_id": row.suite_id}
+
+
+async def _scoped_feedback(
+    feedback_id: str, request: Request, session: AsyncSession,
+) -> Feedback:
+    scope = await _run_scope(request, session)
+    stmt = select(Feedback).join(Run, Feedback.run_id == Run.id).where(Feedback.id == feedback_id)
+    if scope is not None:
+        stmt = stmt.where(scope)
+    row = (await session.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(404, "feedback not found")
+    return row
+
+
+def _resolution_out(row: FeedbackResolution) -> dict[str, Any]:
+    return {
+        "id": row.id, "feedback_id": row.feedback_id, "gate_run_id": row.gate_run_id,
+        "case_id": row.case_id, "verdict": row.verdict, "note": row.note,
+        "created_by": row.created_by, "created_at": row.created_at,
+    }
+
+
+@router.get("/feedback/{feedback_id}/resolutions")
+async def list_feedback_resolutions(
+    feedback_id: str, request: Request, session: AsyncSession = Depends(get_session),
+) -> list[dict[str, Any]]:
+    row = await _scoped_feedback(feedback_id, request, session)
+    rows = (await session.execute(
+        select(FeedbackResolution).where(FeedbackResolution.feedback_id == row.id)
+        .order_by(FeedbackResolution.created_at.asc())
+    )).scalars().all()
+    return [_resolution_out(item) for item in rows]
+
+
+@router.post("/feedback/{feedback_id}/resolutions", status_code=201)
+async def create_feedback_resolution(
+    feedback_id: str, payload: FeedbackResolutionCreate, request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    feedback = await _scoped_feedback(feedback_id, request, session)
+    principal = get_principal(request)
+    if principal.role != "admin":
+        if not feedback.team_id:
+            raise HTTPException(404, "feedback not found")
+        await authorize(request, session, "approval:manage", feedback.team_id)
+    gate = await session.get(GateRun, payload.gate_run_id)
+    version = await session.get(AgentVersion, gate.agent_version_id) if gate else None
+    if (
+        gate is None or version is None or version.agent_id != feedback.agent_id
+        or version.team_id != feedback.team_id
+    ):
+        raise HTTPException(404, "gate run not found for this feedback")
+    if feedback.suite_id is not None and gate.suite_id != feedback.suite_id:
+        raise HTTPException(422, "resolution GateRun does not match the feedback suite")
+    if payload.verdict == "confirmed_fixed" and feedback.eval_case_id is None:
+        raise HTTPException(422, "confirmed_fixed requires a feedback regression case")
+    actor = principal.user_id or "local-single-user"
+    try:
+        gate_record = GateRecordV1.model_validate({
+            "id": gate.id, "agent_version_id": gate.agent_version_id, "suite_id": gate.suite_id,
+            "baseline_gate_id": gate.baseline_gate_id, "status": gate.status,
+            "quality_record_version": gate.quality_record_version,
+            "conditions": _json(gate.conditions, None), "details": _json(gate.details, []),
+            "evidence": _json(gate.evidence, None), "diff": _json(gate.diff, []),
+        })
+        feedback_record = FeedbackRecord.model_validate({
+            "id": feedback.id, "run_id": feedback.run_id, "agent_id": feedback.agent_id,
+            "agent_version_id": feedback.agent_version_id, "rating": feedback.rating,
+            "expected_answer": feedback.expected_answer, "eval_case_id": feedback.eval_case_id,
+            "suite_id": feedback.suite_id,
+        })
+        resolution = FeedbackResolutionContract.model_validate({
+            "id": str(uuid.uuid4()), "feedback_id": feedback.id, "gate_run_id": gate.id,
+            "case_id": payload.case_id, "verdict": payload.verdict, "note": payload.note,
+            "created_by": actor, "created_at": datetime.now(UTC),
+        })
+        validate_feedback_resolution(
+            feedback_record, resolution, gate_record, human_reviewed=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    row = FeedbackResolution(
+        id=str(resolution.id), feedback_id=feedback.id, gate_run_id=gate.id,
+        case_id=payload.case_id, verdict=payload.verdict, note=payload.note,
+        created_by=actor, created_at=resolution.created_at.replace(tzinfo=None),
+    )
+    session.add(row)
+    await session.flush()
+    record_audit(
+        session, request, action="feedback.resolve", target_type="feedback_resolution",
+        target_id=row.id, team_id=feedback.team_id,
+        detail={"feedback_id": feedback.id, "gate_run_id": gate.id, "verdict": row.verdict},
+    )
+    await session.commit()
+    return _resolution_out(row)
 
 
 def _rule_out(row: AlertRule) -> dict[str, Any]:

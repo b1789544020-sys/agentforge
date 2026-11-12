@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { QualityGates, type AgentVersion, type EvalSuite, type GateRun } from "../api/client";
 import { useAgentStore } from "../stores/agentStore";
+import { GateQualityEvidence } from "../components/QualityEvidence";
 
-export default function QualityGatePanel() {
+export default function QualityGatePanel({ onOpenRun }: {
+  onOpenRun?: (agentId: string, runId: string, versionId: string) => void;
+}) {
   const { agents, loadAgents } = useAgentStore();
   const [agentId, setAgentId] = useState("");
   const [versions, setVersions] = useState<AgentVersion[]>([]);
@@ -35,11 +38,13 @@ export default function QualityGatePanel() {
   }, [agentId]);
   useEffect(() => {
     if (!agentId) return;
-    QualityGates.list(agentId, suiteId || undefined).then((rows) => {
+    QualityGates.list(agentId, suiteId || undefined).then(async (rows) => {
       setGates(rows);
-      setSelected((current) => rows.find((row) => row.id === current?.id) || rows[0] || null);
+      const currentId = selected?.id;
+      const summary = rows.find((row) => row.id === currentId) || rows[0];
+      setSelected(summary ? await QualityGates.get(agentId, summary.id) : null);
     }).catch((reason) => setError(String(reason)));
-  }, [agentId, suiteId]);
+  }, [agentId, suiteId, selected?.id]);
 
   const refresh = async (gateId: string) => {
     const fresh = await QualityGates.get(agentId, gateId);
@@ -71,6 +76,12 @@ export default function QualityGatePanel() {
       for (let index = 0; index < 40 && ["pending", "running"].includes(current.status); index += 1) {
         await new Promise((resolve) => setTimeout(resolve, 500));
         current = await refresh(gate.id);
+      }
+      if (!["pending", "running"].includes(current.status)) {
+        // The gate updates AgentVersion.gate_status on the backend.  Refresh
+        // the version options as well as the gate detail so the header badge
+        // cannot remain "pending" beside an already-passed history row.
+        setVersions(await QualityGates.versions(agentId));
       }
     } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
   };
@@ -145,7 +156,7 @@ export default function QualityGatePanel() {
           <h3>历史门禁</h3>
           {!gates.length && <div className="empty">尚无门禁记录</div>}
           {!!gates.length && <table><thead><tr><th>时间</th><th>触发</th><th>结果</th><th>通过率</th></tr></thead>
-            <tbody>{gates.map((gate) => <tr key={gate.id} onClick={() => setSelected(gate)} className="clickable">
+            <tbody>{gates.map((gate) => <tr key={gate.id} onClick={() => void refresh(gate.id)} className="clickable">
               <td>{new Date(gate.created_at).toLocaleString()}</td><td>{gate.trigger_source}</td>
               <td><span className={`badge ${gate.status}`}>{gate.status}</span></td>
               <td>{(gate.pass_rate * 100).toFixed(0)}% / {(gate.threshold * 100).toFixed(0)}%</td>
@@ -156,6 +167,9 @@ export default function QualityGatePanel() {
       {selected && <section className="card">
         <h3>门禁明细 <span className={`badge ${selected.status}`}>{selected.status}</span></h3>
         {selected.error && <div className="banner err">{selected.error}</div>}
+        <h4>四层质量证据</h4>
+        <GateQualityEvidence gate={selected} onOpenRun={onOpenRun ? (runId, versionId) =>
+          onOpenRun(agentId, runId, versionId) : undefined} />
         <h4>失败用例（{failedCases.length}）</h4>
         {!failedCases.length && <p className="muted">没有失败用例</p>}
         {failedCases.map((row) => <div key={row.case_id} className="gate-case">
@@ -165,7 +179,12 @@ export default function QualityGatePanel() {
         <h4>与上一版本对比</h4>
         {!selected.diff.length && <p className="muted">首个门禁，无可比较基线</p>}
         {selected.diff.map((row) => <details key={row.case_id} className={`diff-row diff-${row.change}`}>
-          <summary><span className={`badge ${row.change}`}>{row.change}</span> <code>{row.case_id}</code></summary>
+          <summary><span className={`badge ${row.change}`}>{row.change}</span> <code>{row.case_id}</code>
+            {row.comparison_status && <span className={`badge ${row.comparison_status === "comparable" ? "passed" : "pending"}`}>{row.comparison_status}</span>}
+          </summary>
+          {!!row.layer_changes?.length && <div className="row wrap">{row.layer_changes.map((layer) =>
+            <span className={`badge ${layer.change}`} key={layer.layer}>{layer.layer}: {layer.change}</span>)}</div>}
+          {!!row.changed_conditions?.length && <p className="quality-warning">比较条件已变化：{row.changed_conditions.join("、")}</p>}
           {row.answer_diff ? <pre>{row.answer_diff}</pre> : <p className="muted">答案无文本变化或没有两侧结果</p>}
         </details>)}
       </section>}

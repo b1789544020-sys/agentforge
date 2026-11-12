@@ -141,6 +141,20 @@ async def test_gate_two_regressions_diff_threshold_and_bypass() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gate_accepts_exact_match_metric_scorer() -> None:
+    case_ids = await _cases()
+    async with _client() as client:
+        agent_id = await _create_agent(client, "gate-exact-match")
+        suite = await _create_suite(client, agent_id, case_ids, scorer="exact_match")
+        version = (await client.get(f"/api/agents/{agent_id}/versions")).json()[0]
+        gate = await _trigger(client, agent_id, version["id"], suite["id"])
+        assert gate["status"] == "passed", gate
+        assert gate["pass_rate"] == 1.0
+        assert len(gate["details"]) == 4
+        assert all(row["passed"] for row in gate["details"])
+
+
+@pytest.mark.asyncio
 async def test_suite_copy_automatic_and_scheduled_triggers() -> None:
     case_ids = await _cases()
     async with _client() as client:

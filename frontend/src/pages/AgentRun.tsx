@@ -13,6 +13,14 @@ import {
 import { useRunStream } from "../hooks/useRunStream";
 import TraceTree from "../components/TraceTree";
 import TokenGauge from "../components/TokenGauge";
+import { RunQualityEvidence } from "../components/QualityEvidence";
+
+export interface RunFocus {
+  agentId: string;
+  runId: string;
+  versionId: string;
+  key: number;
+}
 
 const TOKEN_BUDGET = 8000;
 const POLL_INTERVAL_MS = 1500;
@@ -37,7 +45,7 @@ function isTerminal(s: string): boolean {
   return s === "success" || s === "failed";
 }
 
-export default function AgentRun() {
+export default function AgentRun({ focus = null }: { focus?: RunFocus | null }) {
   const { t } = useTranslation();
   const { agents, loadAgents } = useAgentStore();
   const [agentId, setAgentId] = useState<string>("");
@@ -61,6 +69,16 @@ export default function AgentRun() {
   useEffect(() => {
     loadAgents();
   }, [loadAgents]);
+
+  useEffect(() => {
+    if (!focus) return;
+    setAgentId(focus.agentId);
+    setError(null);
+    Runs.get(focus.agentId, focus.runId).then((detail) => {
+      setActiveRun(detail);
+      setInput(detail.input);
+    }).catch((reason) => setError(String(reason)));
+  }, [focus]);
 
   useEffect(() => {
     if (agents.length && !agentId) {
@@ -260,6 +278,16 @@ export default function AgentRun() {
           ),
         );
         setRunning(false);
+        // Reconcile with the canonical persisted detail.  A complete frame can
+        // arrive in the same React batch as step frames, and an early snapshot
+        // may not contain every step.  Replacing only this run prevents stale
+        // responses from overwriting a newly selected run.
+        void Runs.get(msg.agent_id, msg.run_id).then((detail) => {
+          setActiveRun((current) => current?.id === detail.id ? detail : current);
+          setRuns((current) => current.map((run) => run.id === detail.id ? detail : run));
+        }).catch((reason: unknown) => {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        });
         return;
       }
       case "run.error": {
@@ -436,6 +464,8 @@ export default function AgentRun() {
                 <TokenGauge used={activeRun.total_tokens} budget={TOKEN_BUDGET} />
                 {evaluationId && <div className="muted">Evaluation: {evaluationId}</div>}
               </div>
+              <h3>四层原始观察</h3>
+              <RunQualityEvidence run={activeRun} />
               <TraceTree steps={activeRun.trace} />
             </>
           ) : (

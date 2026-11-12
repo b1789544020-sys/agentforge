@@ -1,17 +1,21 @@
 """Private knowledge-base management, upload, search, and Agent binding."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.versions import create_agent_version
 from app.api.auth import get_principal
 from app.audit import record_audit
 from app.config import get_settings
 from app.database import get_session
+from app.dispatch import submit_gate
+from app.gates.service import create_automatic_gates
 from app.knowledge import extract_document, index_document, search_knowledge
 from app.models import Agent, KnowledgeBase, KnowledgeBinding, KnowledgeChunk, KnowledgeDocument
 from app.rbac import accessible_team_ids, authorize, resolve_team_for_create, team_role
@@ -124,7 +128,10 @@ async def search_kb(kb_id: str, agent_id: str, q: str, request: Request, top_k: 
 
 
 @router.put("/agents/{agent_id}/knowledge/{kb_id}", status_code=201)
-async def bind_kb(agent_id: str, kb_id: str, request: Request, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def bind_kb(
+    agent_id: str, kb_id: str, request: Request, background: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
     kb = await _access(request, session, await session.get(KnowledgeBase, kb_id), write=True)
     agent = await session.get(Agent, agent_id)
     if agent is None or agent.team_id != kb.team_id:
@@ -132,18 +139,35 @@ async def bind_kb(agent_id: str, kb_id: str, request: Request, session: AsyncSes
     existing = (await session.execute(select(KnowledgeBinding).where(
         KnowledgeBinding.agent_id == agent_id, KnowledgeBinding.kb_id == kb_id
     ))).scalar_one_or_none()
+    saved_version = None
     if existing is None:
         existing = KnowledgeBinding(agent_id=agent_id, kb_id=kb_id)
         session.add(existing)
         await session.flush()
+        agent.updated_at = datetime.utcnow()
+        saved_version = await create_agent_version(
+            session, agent, created_by=get_principal(request).user_id
+        )
     record_audit(session, request, action="knowledge.bind", target_type="knowledge_binding", target_id=existing.id,
                  team_id=kb.team_id, detail={"agent_id": agent_id, "kb_id": kb_id})
     await session.commit()
-    return {"agent_id": agent_id, "kb_id": kb_id, "binding_id": existing.id}
+    if saved_version is not None:
+        gates = await create_automatic_gates(
+            session, saved_version, triggered_by=get_principal(request).user_id
+        )
+        for gate in gates:
+            submit_gate(gate.id, background)
+    return {
+        "agent_id": agent_id, "kb_id": kb_id, "binding_id": existing.id,
+        "agent_version_id": saved_version.id if saved_version is not None else None,
+    }
 
 
-@router.delete("/agents/{agent_id}/knowledge/{kb_id}", status_code=204)
-async def unbind_kb(agent_id: str, kb_id: str, request: Request, session: AsyncSession = Depends(get_session)) -> None:
+@router.delete("/agents/{agent_id}/knowledge/{kb_id}", status_code=204, response_model=None)
+async def unbind_kb(
+    agent_id: str, kb_id: str, request: Request, background: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> None:
     kb = await _access(request, session, await session.get(KnowledgeBase, kb_id), write=True)
     binding = (await session.execute(select(KnowledgeBinding).where(
         KnowledgeBinding.agent_id == agent_id, KnowledgeBinding.kb_id == kb_id
@@ -151,8 +175,21 @@ async def unbind_kb(agent_id: str, kb_id: str, request: Request, session: AsyncS
     if binding:
         record_audit(session, request, action="knowledge.unbind", target_type="knowledge_binding", target_id=binding.id,
                      team_id=kb.team_id, detail={"agent_id": agent_id, "kb_id": kb_id})
+        agent = await session.get(Agent, agent_id)
+        if agent is None:
+            raise HTTPException(404, "agent not found")
         await session.delete(binding)
+        await session.flush()
+        agent.updated_at = datetime.utcnow()
+        saved_version = await create_agent_version(
+            session, agent, created_by=get_principal(request).user_id
+        )
         await session.commit()
+        gates = await create_automatic_gates(
+            session, saved_version, triggered_by=get_principal(request).user_id
+        )
+        for gate in gates:
+            submit_gate(gate.id, background)
 
 
 __all__ = ["router"]

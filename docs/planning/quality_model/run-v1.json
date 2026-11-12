@@ -1,0 +1,65 @@
+{
+  "id": "33333333-3333-4333-8333-333333333333",
+  "agent_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "agent_version_id": "22222222-2222-4222-8222-222222222222",
+  "input": "Which corpus license applies, and what is still missing?",
+  "output": "The corpus documents are MIT licensed [1].",
+  "status": "success",
+  "quality_record_version": 1,
+  "answer_output": {
+    "answer": "The corpus documents are MIT licensed [1].",
+    "answer_status": "answered",
+    "evidence": [
+      {
+        "evidence_id": "answer-evidence-1",
+        "source_id": "source-1",
+        "citation_text": "[1]",
+        "answer_excerpt": "The corpus documents are MIT licensed",
+        "source_excerpt": "Permission is hereby granted, free of charge...",
+        "support_status": "not_checked"
+      }
+    ]
+  },
+  "tool_output": {
+    "calls": [],
+    "results": []
+  },
+  "retrieval_output": {
+    "queries": [
+      {
+        "query_id": "query-1",
+        "text": "corpus license missing acceptance evidence",
+        "knowledge_base_ids": ["kb-design-example"],
+        "embedding": {"provider": "local", "model": "hashing", "dimensions": 128},
+        "index": {"snapshot_id": "index-example-1", "algorithm": "memory-cosine-v1", "corpus_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "top_k": 5,
+        "filters": {},
+        "candidates": [{"source_id": "source-1", "rank": 1, "score": 0.21, "injected": true}],
+        "duration_ms": 4,
+        "status": "completed",
+        "error": null
+      }
+    ],
+    "sources": [
+      {
+        "source_id": "source-1",
+        "knowledge_base_id": "kb-design-example",
+        "document_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "chunk_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        "document_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "chunk_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "locator": {"filename": "mit-document.md", "section": "License"},
+        "source_excerpt": "Permission is hereby granted, free of charge...",
+        "excerpt_truncated": true
+      }
+    ]
+  },
+  "execution_output": {
+    "events": [
+      {"event_id": "event-1", "step_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "sequence": 1, "kind": "final_answer", "status": "ok", "parent_event_id": null}
+    ],
+    "metrics": {"duration_ms": 1250, "prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120, "step_count": 1, "tool_call_count": 0, "retrieval_query_count": 1},
+    "error": null,
+    "result": {"status": "success", "started_at": "2026-11-10T10:00:00Z", "finished_at": "2026-11-10T10:00:01.250Z", "termination_reason": null, "record_complete": true}
+  }
+}

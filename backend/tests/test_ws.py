@@ -16,13 +16,16 @@ import asyncio
 import json
 import time
 import uuid
+from types import SimpleNamespace
 from typing import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.api.ws_broadcaster import RunBroadcaster
+from app.database import SyncSessionLocal
 from app.main import app
+from app.models import Run
 
 # 集成测试经 TestClient（独立线程的 anyio portal）驱动完整 WS 流式推送 +
 # 内存 SQLite，线程调度时序受负载影响；失败时透明重跑几次。
@@ -141,6 +144,45 @@ def test_ws_terminal_run_short_circuits(client: TestClient) -> None:
     assert len(snap["run"]["trace"]) >= 1
     assert complete["event"] == "run.complete"
     assert complete["status"] == detail["status"]
+
+
+def test_ws_complete_published_during_snapshot_is_not_lost(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A terminal publish in the snapshot/subscription gap must be queued."""
+    from app.api import ws as ws_module
+    from app.api.runs import _publish_complete
+
+    agent = _create_agent(client)
+    run_id = f"race-{uuid.uuid4().hex}"
+    with SyncSessionLocal() as session:
+        session.add(Run(id=run_id, agent_id=agent["id"], input="race", status="running"))
+        session.commit()
+
+    original_send = ws_module._send
+    injected = False
+
+    async def send_then_complete(websocket, payload) -> None:
+        nonlocal injected
+        await original_send(websocket, payload)
+        if payload.get("event") == "run.snapshot" and not injected:
+            injected = True
+            _publish_complete(run_id, SimpleNamespace(
+                agent_id=agent["id"], status="success", output="done",
+                total_tokens=0, duration_ms=1, step_count=0, error=None,
+            ))
+
+    monkeypatch.setattr(ws_module, "_send", send_then_complete)
+    with client.websocket_connect(
+        f"/api/agents/{agent['id']}/runs/{run_id}/ws"
+    ) as ws:
+        snapshot = json.loads(ws.receive_text())
+        complete = json.loads(ws.receive_text())
+    assert snapshot["event"] == "run.snapshot"
+    assert snapshot["run"]["status"] == "running"
+    assert complete["event"] == "run.complete"
+    assert complete["status"] == "success"
+    assert complete["output"] == "done"
 
 
 def test_ws_live_run_streams_steps(client: TestClient) -> None:

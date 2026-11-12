@@ -1,0 +1,73 @@
+{
+  "id": "55555555-5555-4555-8555-555555555555",
+  "agent_version_id": "22222222-2222-4222-8222-222222222222",
+  "suite_id": "77777777-7777-4777-8777-777777777777",
+  "baseline_gate_id": "66666666-6666-4666-8666-666666666666",
+  "status": "failed",
+  "quality_record_version": 1,
+  "conditions": {
+    "suite": {
+      "suite_id": "77777777-7777-4777-8777-777777777777",
+      "case_ids": ["88888888-8888-4888-8888-888888888888"],
+      "case_snapshots": [{"case_id": "88888888-8888-4888-8888-888888888888", "input": "Which corpus license applies, and what is still missing?", "expected": "MIT license plus an explicit statement of missing acceptance evidence", "metadata": {"contract": "research-v1"}, "input_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "expected_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "metadata_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}],
+      "scorer": {"name": "research-contract", "version": "1", "config": {"required_layers": ["output", "retrieval", "system"], "citation_required": true}, "config_sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+      "case_pass_threshold": 0.7,
+      "gate_threshold_at_execution": 0.95
+    },
+    "execution": {
+      "agent_version_id": "22222222-2222-4222-8222-222222222222",
+      "definition_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "provider": "ollama",
+      "model": "qwen2.5:3b-cpu",
+      "model_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+      "temperature": 0.2,
+      "seed": null,
+      "run_count": 1,
+      "tool_definitions_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "retrieval": {"embedding_model": "hashing", "index_snapshot_id": "index-example-1", "corpus_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "top_k": 5},
+    "comparison": {"allowed_changes": ["agent_version_id", "definition_sha256"], "required_invariants": ["suite.case_snapshots", "suite.scorer", "execution.run_count", "execution.provider", "execution.model", "execution.model_digest", "execution.temperature", "execution.seed", "execution.tool_definitions_sha256", "retrieval"]}
+  },
+  "details": [
+    {"case_id": "88888888-8888-4888-8888-888888888888", "result_case_id": "99999999-9999-4999-8999-999999999999", "input": "Which corpus license applies, and what is still missing?", "expected": "MIT license plus an explicit statement of missing acceptance evidence", "output": "The corpus documents are MIT licensed [1].", "score": 0.4, "passed": false, "run_ids": ["33333333-3333-4333-8333-333333333333"], "attempt_count": 1, "failed_layers": ["output", "retrieval"]}
+  ],
+  "evidence": [
+    {
+      "evidence_id": "gate-evidence-1",
+      "case_id": "88888888-8888-4888-8888-888888888888",
+      "result_case_id": "99999999-9999-4999-8999-999999999999",
+      "attempt": 1,
+      "run_id": "33333333-3333-4333-8333-333333333333",
+      "agent_version_id": "22222222-2222-4222-8222-222222222222",
+      "passed": false,
+      "failed_layers": ["output", "retrieval"],
+      "layers": {
+        "output": {"status": "failed", "assertions": [{"assertion_id": "answer-completeness", "kind": "required_content", "status": "failed", "score": 0.4, "reason": "Missing acceptance limitation", "subject": {"run_id": "33333333-3333-4333-8333-333333333333", "pointer": "/answer_output"}}]},
+        "tool": {"status": "not_evaluated", "assertions": []},
+        "retrieval": {"status": "failed", "assertions": [{"assertion_id": "retrieval-relevance", "kind": "source_relevance", "status": "failed", "score": 0.21, "reason": "Weakly related source below the reviewed threshold", "subject": {"run_id": "33333333-3333-4333-8333-333333333333", "pointer": "/retrieval_output/queries/0/candidates/0"}}]},
+        "system": {"status": "passed", "assertions": [{"assertion_id": "provider-completion", "kind": "run_status", "status": "passed", "score": 1.0, "reason": "Provider returned without a protocol error", "subject": {"run_id": "33333333-3333-4333-8333-333333333333", "pointer": "/execution_output/result"}}]}
+      },
+      "error": null
+    }
+  ],
+  "diff": [
+    {
+      "case_id": "88888888-8888-4888-8888-888888888888",
+      "change": "new_failure",
+      "previous_passed": true,
+      "current_passed": false,
+      "answer_diff": "- MIT license and missing acceptance evidence\n+ The corpus documents are MIT licensed [1].",
+      "previous_agent_version_id": "11111111-1111-4111-8111-111111111111",
+      "current_agent_version_id": "22222222-2222-4222-8222-222222222222",
+      "previous_run_ids": ["44444444-4444-4444-8444-444444444444"],
+      "current_run_ids": ["33333333-3333-4333-8333-333333333333"],
+      "previous_evidence_ids": [],
+      "current_evidence_ids": ["gate-evidence-1"],
+      "layer_changes": [{"layer": "output", "change": "not_comparable"}, {"layer": "tool", "change": "not_comparable"}, {"layer": "retrieval", "change": "not_comparable"}, {"layer": "system", "change": "not_comparable"}],
+      "comparison_status": "insufficient_evidence",
+      "changed_conditions": [],
+      "previous_conditions_sha256": null,
+      "current_conditions_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    }
+  ]
+}

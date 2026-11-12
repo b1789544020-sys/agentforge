@@ -1,0 +1,108 @@
+{
+  "passed": true,
+  "scope": "capability-led product showcase using verified real-browser recordings",
+  "source_browser_run": "run-f833e59f3192437786a1595808a6b739",
+  "browser_assertions": [
+    "v1 passed, v2 new_failure, v3 fixed with exact Run evidence",
+    "Gate deep link opened the exact Run and four raw observations",
+    "Negative Gate Run feedback reused its original fixed EvalCase",
+    "Human confirmed_fixed persisted against the exact baseline Run",
+    "Public delivery returned the fixed version and exact output"
+  ],
+  "browser_errors": [],
+  "duration_seconds": 183.328,
+  "video": {
+    "codec": "h264",
+    "width": 1280,
+    "height": 720,
+    "fps": "38125/1527",
+    "sha256": "e72d265f3ff0a5462f14f764f281bb9477c70960a99e885b97fc57c404936bb1"
+  },
+  "audio": {
+    "codec": "aac",
+    "sample_rate": 48000,
+    "mean_volume_db": -16.1
+  },
+  "subtitles": {
+    "count": 25,
+    "encoding": "UTF-8",
+    "non_overlapping": true,
+    "sha256": "ea30ad58934a9569e3c37ba4f0502f99a97f0de361b5aeb6d44255457b924acf"
+  },
+  "gif": {
+    "duration_seconds": 24.0,
+    "sha256": "d937a707827db8b5cb473d618733b6721c5c248250f2bc23b7af3a9977630734"
+  },
+  "scenes": [
+    {
+      "id": "title",
+      "title": "AgentForge｜Agent 质量工程与交付平台",
+      "start": 0.0,
+      "duration": 17.32
+    },
+    {
+      "id": "model",
+      "title": "一个平台，管理 Agent 的完整生命周期",
+      "start": 17.32,
+      "duration": 21.2
+    },
+    {
+      "id": "gate-fixed",
+      "title": "固定回归，看清每一次版本变化",
+      "start": 38.519999999999996,
+      "duration": 21.92
+    },
+    {
+      "id": "exact-run",
+      "title": "从评测结果，直达完整执行细节",
+      "start": 60.44,
+      "duration": 20.68
+    },
+    {
+      "id": "gate-regression",
+      "title": "四层证据，快速定位问题",
+      "start": 81.12,
+      "duration": 20.48
+    },
+    {
+      "id": "human-feedback",
+      "title": "把用户反馈变成回归资产",
+      "start": 101.60000000000001,
+      "duration": 22.68
+    },
+    {
+      "id": "human-resolution",
+      "title": "自动评测与人工复核协同工作",
+      "start": 124.28,
+      "duration": 20.68
+    },
+    {
+      "id": "version-delivery",
+      "title": "将通过验证的版本交付给用户",
+      "start": 144.96,
+      "duration": 19.64
+    },
+    {
+      "id": "closing",
+      "title": "让每一次 Agent 迭代更有信心",
+      "start": 164.60000000000002,
+      "duration": 18.64
+    }
+  ],
+  "full_decode_errors": [],
+  "transition_frame_check": "passed",
+  "review_frames": [
+    "title.png",
+    "model.png",
+    "gate-fixed.png",
+    "exact-run.png",
+    "gate-regression.png",
+    "human-feedback.png",
+    "human-resolution.png",
+    "version-delivery.png",
+    "closing.png"
+  ],
+  "privacy": "No credentials, private paths, browser profiles, or upstream model responses are shown.",
+  "technical_evidence": "docs/planning/DEVELOPMENT_BASELINE.md",
+  "future_plan": "docs/planning/FUTURE.md"
+}

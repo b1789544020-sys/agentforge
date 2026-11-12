@@ -1,0 +1,18 @@
+﻿# FastAPI 0.141 / pytest 全量回归中的测试内省兼容性失败
+# 退出码：1；349 passed / 1 failed
+
+________________ test_delete_metadata_declares_empty_response _________________
+backend\tests\test_tools_metadata.py:101: in test_delete_metadata_declares_empty_response
+    route = next(
+backend\tests\test_tools_metadata.py:104: in <genexpr>
+    if route.path == "/api/tools/{name}/metadata"
+       ^^^^^^^^^^
+E   AttributeError: '_IncludedRouter' object has no attribute 'path'
+============================== warnings summary ===============================
+backend\app\eval\scorer.py:39
+  <repo>\backend\app\eval\scorer.py:39: PytestCollectionWarning: cannot collect test class 'TestCase' because it has a __init__ constructor (from: backend/tests/test_scorer.py)
+    @dataclass
+
+=========================== short test summary info ===========================
+FAILED backend/tests/test_tools_metadata.py::test_delete_metadata_declares_empty_response
+1 failed, 349 passed, 1317 warnings in 124.47s (0:02:04)

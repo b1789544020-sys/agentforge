@@ -13,13 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.loop import AgentLoop
+from app.agent.schema import public_legacy_dto
 from app.agent.versions import agent_from_version
 from app.api.auth import get_principal
 from app.audit import record_audit
 from app.database import get_session
 from app.models import AgentVersion, Deployment, GateBypass, KnowledgeBinding
 from app.rbac import accessible_team_ids, authorize, scoped_agent_ids
-from app.secrets import redact_config
 
 router = APIRouter(prefix="/deployments", tags=["deployments"])
 public_router = APIRouter(tags=["delivery"])
@@ -54,7 +54,7 @@ def _out(row: Deployment, raw_token: str | None = None) -> dict[str, Any]:
     result = {"id": row.id, "agent_id": row.agent_id, "team_id": row.team_id,
               "agent_version_id": row.agent_version_id, "name": row.name, "status": row.status,
               "token_prefix": row.token_prefix, "token_revoked": row.token_revoked,
-              "runtime_spec": redact_config(_json(row.runtime_spec, {})),
+              "runtime_spec": public_legacy_dto(_json(row.runtime_spec, {})),
               "version_history": _json(row.version_history, []), "published_by": row.published_by,
               "created_at": row.created_at, "updated_at": row.updated_at}
     if raw_token:
@@ -64,10 +64,19 @@ def _out(row: Deployment, raw_token: str | None = None) -> dict[str, Any]:
 
 
 async def _spec(session: AsyncSession, version: AgentVersion) -> dict[str, Any]:
-    kb_ids = list((await session.execute(
-        select(KnowledgeBinding.kb_id).where(KnowledgeBinding.agent_id == version.agent_id)
-    )).scalars().all())
-    return {"agent_version_id": version.id, "agent_snapshot": _json(version.snapshot, {}),
+    snapshot = _json(version.snapshot, {})
+    if snapshot.get("schema_version") == 1:
+        resources = snapshot.get("resources") or {}
+        kb_ids = sorted(
+            str(row["kb_id"]) for row in resources.get("knowledge_bases") or []
+            if isinstance(row, dict) and row.get("kb_id")
+        )
+    else:
+        # Legacy snapshots retain their historical current-binding delivery.
+        kb_ids = list((await session.execute(
+            select(KnowledgeBinding.kb_id).where(KnowledgeBinding.agent_id == version.agent_id)
+        )).scalars().all())
+    return {"agent_version_id": version.id, "agent_snapshot": snapshot,
             "knowledge_base_ids": kb_ids}
 
 

@@ -30,12 +30,18 @@ A single-agent export is the same shape — ``agents`` is always a list.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping
+import copy
+import hashlib
+from collections import Counter
+from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
+from typing import Any
 
 import yaml
 
 FORMAT_VERSION = 1
+CANONICAL_FORMAT_VERSION = 2
+SUPPORTED_FORMAT_VERSIONS = frozenset({FORMAT_VERSION, CANONICAL_FORMAT_VERSION})
 KIND = "agentforge.agent"
 AGENT_FIELDS: tuple[str, ...] = (
     "name",
@@ -51,7 +57,7 @@ AGENT_FIELDS: tuple[str, ...] = (
 
 
 def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def agent_to_dict(agent: Any) -> dict[str, Any]:
@@ -92,13 +98,78 @@ def agent_to_dict(agent: Any) -> dict[str, Any]:
     return out
 
 
-def build_payload(agents: Iterable[Any], *, single: bool = False) -> dict[str, Any]:
-    """Wrap one or many agents in a versioned export envelope."""
-    rows = [agent_to_dict(a) for a in agents]
+def agent_to_definition(agent: Any) -> dict[str, Any]:
+    """Project either an existing public Definition or a legacy Agent DTO."""
+    from app.agent.schema import public_definition
+
+    if isinstance(agent, Mapping) and agent.get("schema_version") == 1:
+        return public_definition(agent)
+    legacy = agent_to_dict(agent)
+    return public_definition(legacy)
+
+
+def _qualified_ref(agent_name: str, ref: str, limit: int) -> str:
+    value = f"{agent_name}:{ref}"
+    if len(value) <= limit:
+        return value
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    return f"{ref[:limit - 17]}-{digest}"
+
+
+def _unique_ref(candidate: str, used: set[str], limit: int) -> str:
+    output = candidate
+    index = 2
+    while output in used:
+        suffix = f"#{index}"
+        output = f"{candidate[:limit - len(suffix)]}{suffix}"
+        index += 1
+    used.add(output)
+    return output
+
+
+def _disambiguate_package_refs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Make logical refs package-unique without exposing local resource IDs."""
+    rows = copy.deepcopy(rows)
+    kb_counts = Counter(
+        item["ref"] for row in rows for item in row["resources"]["knowledge_bases"]
+    )
+    secret_counts = Counter(item["ref"] for row in rows for item in row["secret_refs"])
+    used_kb: set[str] = set()
+    used_secrets: set[str] = set()
+    for row in rows:
+        for item in row["resources"]["knowledge_bases"]:
+            original = item["ref"]
+            candidate = (
+                _qualified_ref(row["name"], original, 128)
+                if kb_counts[original] > 1 else original
+            )
+            item["ref"] = _unique_ref(candidate, used_kb, 128)
+        for item in row["secret_refs"]:
+            original = item["ref"]
+            candidate = (
+                _qualified_ref(row["name"], original, 200)
+                if secret_counts[original] > 1 else original
+            )
+            item["ref"] = _unique_ref(candidate, used_secrets, 200)
+    return rows
+
+
+def build_payload(
+    agents: Iterable[Any], *, single: bool = False, envelope: int = CANONICAL_FORMAT_VERSION
+) -> dict[str, Any]:
+    """Wrap agents in canonical envelope 2 or an explicitly lossy legacy envelope."""
+    if envelope not in SUPPORTED_FORMAT_VERSIONS:
+        raise ValueError(f"unsupported export envelope: {envelope!r}")
+    rows = [
+        agent_to_dict(agent) if envelope == FORMAT_VERSION else agent_to_definition(agent)
+        for agent in agents
+    ]
     if single and len(rows) != 1:
         raise ValueError(f"single=True requires exactly 1 agent, got {len(rows)}")
+    if envelope == CANONICAL_FORMAT_VERSION:
+        rows = _disambiguate_package_refs(rows)
     return {
-        "version": FORMAT_VERSION,
+        "version": envelope,
         "kind": KIND,
         "exported_at": _utcnow_iso(),
         "agents": rows,
@@ -135,9 +206,9 @@ def load(text: str, fmt: str = "json") -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("payload must be a JSON/YAML object")
     version = data.get("version")
-    if version != FORMAT_VERSION:
+    if version not in SUPPORTED_FORMAT_VERSIONS:
         raise ValueError(
-            f"unsupported version: {version!r} (expected {FORMAT_VERSION})"
+            f"unsupported version: {version!r} (expected 1 or 2)"
         )
     kind = data.get("kind")
     if kind != KIND:
@@ -171,12 +242,19 @@ def detect_format(filename: str | None, content: str | bytes) -> str:
 
 
 def agents_from_payload(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Return the cleaned list of agent dicts from a parsed payload.
+    """Return legacy-cleaned rows or strictly validated canonical rows.
 
-    Drops unknown keys so a forward-compatible export (e.g. with a
-    ``description`` field added in a later version) still imports
-    cleanly into an older server.
+    Envelope 1 keeps its historical unknown-key dropping behavior. Envelope 2
+    instead rejects unknown or higher-version Definition fields so resources
+    and extensions cannot be silently discarded.
     """
+    if payload.get("version") == CANONICAL_FORMAT_VERSION:
+        from app.agent.schema import AgentDefinition
+        return [
+            AgentDefinition.model_validate(row).model_dump(mode="json")
+            for row in payload["agents"]
+        ]
+
     out: list[dict[str, Any]] = []
     for row in payload["agents"]:
         if not isinstance(row, dict):
@@ -193,13 +271,16 @@ def agents_from_payload(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 __all__ = [
+    "AGENT_FIELDS",
+    "CANONICAL_FORMAT_VERSION",
     "FORMAT_VERSION",
     "KIND",
-    "AGENT_FIELDS",
+    "SUPPORTED_FORMAT_VERSIONS",
+    "agent_to_definition",
     "agent_to_dict",
+    "agents_from_payload",
     "build_payload",
+    "detect_format",
     "dump",
     "load",
-    "detect_format",
-    "agents_from_payload",
 ]

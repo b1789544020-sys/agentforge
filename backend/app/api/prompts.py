@@ -7,16 +7,22 @@ import uuid
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete as sql_delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.schema import public_legacy_dto
+from app.agent.versions import create_agent_version
+from app.api.auth import get_principal
 from app.database import async_session_factory, get_session
+from app.dispatch import submit_gate
+from app.gates.service import create_automatic_gates
 from app.eval import control as eval_control
 from app.eval.runner import EvalRunner, RunEvalResult
 from app.eval.scorer import EvalScorer
 from app.models import Agent, EvalCase, PromptTemplate, PromptVersion
+from app.secrets import protect_config
 
 router = APIRouter(prefix="/agents/{agent_id}/prompt-templates", tags=["prompts"])
 
@@ -130,6 +136,7 @@ async def create_version(
 @router.post("/{template_id}/bind")
 async def bind_template(
     agent_id: str, template_id: str, payload: BindTemplate,
+    background: BackgroundTasks, request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     agent = await session.get(Agent, agent_id)
@@ -148,17 +155,32 @@ async def bind_template(
         config = json.loads(agent.config or "{}")
     except (TypeError, ValueError):
         config = {}
+    previous = dict(config)
     config.update({
         "prompt_template_id": template_id,
         "prompt_version": version.version,
         "prompt_variables": payload.variables,
     })
-    agent.config = json.dumps(config, ensure_ascii=False)
+    protected = protect_config(config, previous)
+    agent.config = json.dumps(protected, ensure_ascii=False)
+    saved_version = await create_agent_version(
+        session, agent, created_by=get_principal(request).user_id
+    )
     await session.commit()
-    return {"template_id": template_id, "version": version.version, "config": config}
+    gates = await create_automatic_gates(
+        session, saved_version, triggered_by=get_principal(request).user_id
+    )
+    for gate in gates:
+        submit_gate(gate.id, background)
+    return {
+        "template_id": template_id,
+        "version": version.version,
+        "agent_version_id": saved_version.id,
+        "config": public_legacy_dto(protected),
+    }
 
 
-@router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_template(
     agent_id: str, template_id: str, session: AsyncSession = Depends(get_session)
 ) -> None:

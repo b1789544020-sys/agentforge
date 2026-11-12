@@ -1,4 +1,11 @@
 import axios from "axios";
+import type {
+  GateCaseEvidence,
+  GateConditions,
+  GateDiffV1,
+  QualityLayer,
+  RunQualityFields,
+} from "./quality";
 
 // Resolve the backend base URL.
 //
@@ -106,6 +113,49 @@ export interface Agent {
   created_at: string;
 }
 
+export interface SecretRef {
+  path: string;
+  ref: string;
+  required: boolean;
+}
+
+export interface AgentDefinition {
+  schema_version: 1;
+  name: string;
+  description: string | null;
+  system_prompt: string | null;
+  provider: string;
+  model: string;
+  temperature: number;
+  max_steps: number;
+  tools: string[];
+  config: Record<string, unknown>;
+  resources: {
+    prompt: { name: string; version: number | null } | null;
+    knowledge_bases: { ref: string; name: string }[];
+  };
+  secret_refs: SecretRef[];
+  extensions: Record<string, unknown>;
+}
+
+export interface MissingSecret extends SecretRef {
+  missing: boolean;
+}
+
+export interface DefinitionResponse {
+  definition: AgentDefinition;
+  base_version_id: string;
+  latest_version_id: string;
+  version_number: number;
+  warnings: { code: string }[];
+  missing_secrets: MissingSecret[];
+}
+
+export interface ResourceMap {
+  knowledge_bases: Record<string, string>;
+  prompts: Record<string, string>;
+}
+
 export interface ToolSpec {
   name: string;
   description: string;
@@ -160,8 +210,9 @@ export interface Step {
 export interface Run {
   id: string;
   agent_id: string;
+  agent_version_id?: string | null;
   input: string;
-  output: string;
+  output: string | null;
   status: "pending" | "running" | "success" | "failed" | "paused" | "cancelled" | "terminated";
   step_count: number;
   total_tokens: number;
@@ -171,7 +222,7 @@ export interface Run {
   error?: string;
 }
 
-export interface RunDetail extends Run {
+export interface RunDetail extends Run, RunQualityFields {
   trace: Step[];
 }
 
@@ -259,6 +310,21 @@ export const Agents = {
   update: (id: string, data: Partial<Agent>) =>
     api.patch<Agent>(`/agents/${id}`, data).then((r) => r.data),
   remove: (id: string) => api.delete(`/agents/${id}`).then((r) => r.status),
+  definition: (id: string) =>
+    api.get<DefinitionResponse>(`/agents/${id}/definition`).then((r) => r.data),
+  saveDefinition: (
+    id: string,
+    data: {
+      definition: AgentDefinition;
+      base_version_id: string;
+      resource_map: ResourceMap;
+      secret_inputs: Record<string, string>;
+    },
+  ) => api.put<DefinitionResponse>(`/agents/${id}/definition`, data).then((r) => r.data),
+  versions: (id: string) =>
+    api.get<AgentVersion[]>(`/agents/${id}/versions`).then((r) => r.data),
+  versionDefinition: (id: string, versionId: string) =>
+    api.get<AgentDefinition>(`/agents/${id}/versions/${versionId}/definition`).then((r) => r.data),
 };
 
 export const Tools = {
@@ -275,6 +341,14 @@ export const Runs = {
   start: (agentId: string, input: string, asyncRun: boolean = false) =>
     api
       .post<Run>(`/agents/${agentId}/runs`, { input, async_run: asyncRun })
+      .then((r) => r.data),
+  startVersion: (agentId: string, versionId: string, input: string) =>
+    api
+      .post<Run>(`/agents/${agentId}/runs`, {
+        input,
+        agent_version_id: versionId,
+        async_run: true,
+      })
       .then((r) => r.data),
   pause: (agentId: string, runId: string) =>
     api
@@ -362,19 +436,24 @@ export interface EvalSuite {
 
 export interface GateCaseResult {
   case_id: string;
+  result_case_id?: string | null;
   input: string;
   expected?: string | null;
   output: string;
   score: number;
   passed: boolean;
   error?: string | null;
+  duration_ms?: number | null;
+  tokens?: number | null;
+  run_ids?: string[] | null;
+  attempt_count?: number | null;
+  failed_layers?: QualityLayer[] | null;
 }
 
-export interface GateDiff {
+export interface GateDiff
+  extends Partial<Omit<GateDiffV1, "case_id" | "change" | "answer_diff">> {
   case_id: string;
-  change: "new_failure" | "fixed" | "unchanged" | "new_case" | "removed";
-  previous_passed?: boolean | null;
-  current_passed?: boolean | null;
+  change: GateDiffV1["change"];
   answer_diff: string;
 }
 
@@ -390,6 +469,9 @@ export interface GateRun {
   failed_case_ids: string[];
   details: GateCaseResult[];
   diff: GateDiff[];
+  quality_record_version?: number | null;
+  conditions?: GateConditions | null;
+  evidence?: GateCaseEvidence[] | null;
   error?: string | null;
   created_at: string;
 }
@@ -512,10 +594,24 @@ export interface CostResponse {
 export interface FeedbackItem {
   id: string;
   run_id: string;
+  agent_id: string;
+  agent_version_id?: string | null;
   rating: "positive" | "negative";
   expected_answer?: string | null;
   context_snapshot: { input?: string; output?: string; agent_version_id?: string };
   eval_case_id?: string | null;
+  suite_id?: string | null;
+}
+
+export interface FeedbackResolutionItem {
+  id: string;
+  feedback_id: string;
+  gate_run_id: string;
+  case_id: string;
+  verdict: "needs_review" | "confirmed_fixed" | "not_fixed" | "conditions_changed";
+  note: string;
+  created_by: string;
+  created_at: string;
 }
 
 export interface AlertRule {
@@ -542,6 +638,11 @@ export const Operations = {
   feedback: () => api.get<FeedbackItem[]>("/operations/feedback", { params: { rating: "negative" } }).then((r) => r.data),
   convertFeedback: (id: string, expectedAnswer: string, suiteId?: string) =>
     api.post(`/operations/feedback/${id}/convert`, { expected_answer: expectedAnswer, suite_id: suiteId || null }),
+  resolutions: (id: string) =>
+    api.get<FeedbackResolutionItem[]>(`/operations/feedback/${id}/resolutions`).then((r) => r.data),
+  resolveFeedback: (id: string, data: {
+    gate_run_id: string; case_id: string; verdict: FeedbackResolutionItem["verdict"]; note: string;
+  }) => api.post<FeedbackResolutionItem>(`/operations/feedback/${id}/resolutions`, data).then((r) => r.data),
   rules: () => api.get<AlertRule[]>("/operations/alerts/rules").then((r) => r.data),
   createRule: (data: { name: string; kind: string; threshold: number }) =>
     api.post<AlertRule>("/operations/alerts/rules", data).then((r) => r.data),

@@ -1,7 +1,6 @@
 """Run / trace endpoints."""
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import uuid
@@ -11,14 +10,26 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.agent import control
 from app.agent.loop import AgentLoop, LoopConfig, LoopResult
-from app.api.schemas import EvalRunOut, RunCreate, RunEvalCreate, RunOut, RunSummary
+from app.agent.schema import missing_secret_refs
+from app.agent.versions import agent_from_version
+from app.api.schemas import EvalRunOut, RunCreate, RunDetailOut, RunEvalCreate, RunOut, RunSummary
 from app.api.ws_broadcaster import broadcaster
 from app.database import async_session_factory, get_session
 from app.dispatch import submit_eval, submit_resume, submit_run
-from app.models import Agent, AgentVersion, EvalCase, EvalRun, Run, Step, RUN_STATUS_PAUSED, RUN_STATUS_RUNNING
+from app.models import (
+    RUN_STATUS_PAUSED,
+    RUN_STATUS_RUNNING,
+    Agent,
+    AgentVersion,
+    EvalCase,
+    EvalRun,
+    Run,
+    Step,
+)
 
 router = APIRouter(prefix="/agents/{agent_id}/runs", tags=["runs"])
 
@@ -59,7 +70,7 @@ def _build_on_step(run_id: str) -> Any:
     def _on_step(step: Step) -> None:
         try:
             broadcaster.publish_step(run_id, _serialize_step(step))
-        except Exception:  # noqa: BLE001 - never break the loop
+        except Exception:
             logger.exception("ws publish_step failed run_id=%s", run_id)
 
     return _on_step
@@ -82,7 +93,7 @@ def _publish_complete(run_id: str, run: Run) -> None:
                 "error": run.error,
             },
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("ws publish_complete failed run_id=%s", run_id)
 
 
@@ -127,6 +138,7 @@ def _serialize_run(run: Run, steps: list[Step] | None = None) -> dict[str, Any]:
     return {
         "id": run.id,
         "agent_id": run.agent_id,
+        "agent_version_id": run.agent_version_id,
         "input": run.input,
         "output": run.output,
         "status": run.status,
@@ -138,6 +150,11 @@ def _serialize_run(run: Run, steps: list[Step] | None = None) -> dict[str, Any]:
         "step_count": run.step_count,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
+        "quality_record_version": run.quality_record_version,
+        "answer_output": json.loads(run.answer_output) if run.answer_output else None,
+        "tool_output": json.loads(run.tool_output) if run.tool_output else None,
+        "retrieval_output": json.loads(run.retrieval_output) if run.retrieval_output else None,
+        "execution_output": json.loads(run.execution_output) if run.execution_output else None,
         "trace": trace,
     }
 
@@ -152,6 +169,10 @@ async def list_runs(
     rows = (
         await session.execute(
             select(Run)
+            .options(
+                defer(Run.answer_output), defer(Run.tool_output),
+                defer(Run.retrieval_output), defer(Run.execution_output),
+            )
             .where(Run.agent_id == agent_id)
             .order_by(Run.started_at.desc())
             .limit(limit)
@@ -162,6 +183,7 @@ async def list_runs(
         {
             "id": r.id,
             "agent_id": r.agent_id,
+            "agent_version_id": r.agent_version_id,
             "input": r.input,
             "output": r.output,
             "status": r.status,
@@ -186,21 +208,42 @@ async def create_run(
     if not agent:
         raise HTTPException(status_code=404, detail="agent not found")
 
+    if payload.agent_version_id is not None:
+        version = await session.get(AgentVersion, payload.agent_version_id)
+        if version is None or version.agent_id != agent_id:
+            raise HTTPException(status_code=404, detail="agent version not found")
+    else:
+        version = (await session.execute(
+            select(AgentVersion).where(AgentVersion.agent_id == agent_id)
+            .order_by(AgentVersion.version_number.desc()).limit(1)
+        )).scalars().first()
+    if version is not None:
+        try:
+            runtime_snapshot = json.loads(version.snapshot or "{}")
+        except (TypeError, ValueError):
+            runtime_snapshot = {}
+        missing = missing_secret_refs(runtime_snapshot)
+        if missing:
+            raise HTTPException(status_code=422, detail={
+                "error": "missing_secrets", "missing_secrets": missing,
+            })
+    execution_agent = agent_from_version(version) if version is not None else agent
     config_snapshot = {
-        "model": payload.model or agent.model,
+        "model": payload.model or execution_agent.model,
         "temperature": (
-            payload.temperature if payload.temperature is not None else agent.temperature
+            payload.temperature
+            if payload.temperature is not None else execution_agent.temperature
         ),
-        "max_steps": payload.max_steps if payload.max_steps is not None else agent.max_steps,
+        "max_steps": (
+            payload.max_steps
+            if payload.max_steps is not None else execution_agent.max_steps
+        ),
     }
     run = Run(
         id=str(uuid.uuid4()),
         agent_id=agent_id,
-        team_id=agent.team_id,
-        agent_version_id=await session.scalar(
-            select(AgentVersion.id).where(AgentVersion.agent_id == agent_id)
-            .order_by(AgentVersion.version_number.desc()).limit(1)
-        ),
+        team_id=execution_agent.team_id,
+        agent_version_id=version.id if version is not None else None,
         input=payload.input,
         status="running",
         config=json.dumps(config_snapshot),
@@ -218,7 +261,7 @@ async def create_run(
     return result
 
 
-@router.get("/{run_id}", response_model=RunOut)
+@router.get("/{run_id}", response_model=RunDetailOut)
 async def get_run(
     agent_id: str,
     run_id: str,
@@ -242,9 +285,8 @@ async def evaluate_existing_run(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Evaluate a run through the same runner, queue, and persistence path."""
-    from app.api.evals import _resolve_scorer, _serialize_run as serialize_eval
-    from app.eval import control as eval_control
-    from app.eval.scorer import EvalScorer
+    from app.api.evals import _resolve_scorer
+    from app.api.evals import _serialize_run as serialize_eval
 
     source = await session.get(Run, run_id)
     if source is None or source.agent_id != agent_id:
@@ -311,10 +353,15 @@ async def _execute_run(
     from app.database import async_session_factory  # local import to avoid cycle
 
     async with async_session_factory() as session:
-        agent = await session.get(Agent, agent_id)
         run = await session.get(Run, run_id)
+        agent = await session.get(Agent, agent_id)
         if not agent or not run:
             return {}
+        if run.agent_version_id:
+            version = await session.get(AgentVersion, run.agent_version_id)
+            if version is None or version.agent_id != agent_id:
+                raise ValueError("run references an unavailable agent version")
+            agent = agent_from_version(version)
         # 0.1.2 #10 WebSocket: wire the broadcaster into the loop
         # via LoopConfig.on_step so every committed step fans out
         # to subscribed WebSocket clients in real time.

@@ -39,6 +39,7 @@ from app.observability import (
     readiness_response,
     request_context_middleware,
 )
+from app.secrets import SecretPathConflictError
 
 logger = logging.getLogger("agentforge")
 settings = get_settings()
@@ -111,6 +112,15 @@ def create_app() -> FastAPI:
         debug=settings.debug,
         lifespan=lifespan,
     )
+
+    @app.exception_handler(SecretPathConflictError)
+    async def secret_path_conflict(_request: Any, exc: SecretPathConflictError) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": {
+                "error": "secret_path_conflict", "path": exc.path, "reason": exc.reason,
+            }},
+        )
 
     # ---- Middleware ----
     app.state.delivery_rate_limiter = DeliveryRateLimiter.from_settings(settings)

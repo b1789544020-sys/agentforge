@@ -14,6 +14,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.agent.exporter import (  # noqa: E402
     AGENT_FIELDS,
+    CANONICAL_FORMAT_VERSION,
     FORMAT_VERSION,
     KIND,
     build_payload,
@@ -84,7 +85,7 @@ async def test_export_all_agents_json_default() -> None:
         assert resp.headers["content-type"].startswith("application/json")
         assert "attachment" in resp.headers.get("content-disposition", "")
         payload = resp.json()
-        assert payload["version"] == FORMAT_VERSION
+        assert payload["version"] == CANONICAL_FORMAT_VERSION
         assert payload["kind"] == KIND
         names = {a["name"] for a in payload["agents"]}
         # Two agents we just created must be present (alongside any
@@ -145,7 +146,7 @@ async def test_import_round_trip_json() -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         name = f"rt-json-{uuid.uuid4().hex[:8]}"
         payload = build_payload(
-            [_agent_stub(name=name, tools=["shell"], config={"x": 1})]
+            [_agent_stub(name=name, tools=["echo"], config={"x": 1})]
         )
         text = dump_payload(payload, "json")
         resp = await client.post(
@@ -248,7 +249,7 @@ async def test_import_overwrite_existing() -> None:
                 "provider": "anthropic",
                 "temperature": 0.1,
                 "max_steps": 4,
-                "tools": json.dumps(["shell"]),
+                "tools": json.dumps(["echo"]),
                 "config": json.dumps({"a": 1}),
             },
         )()

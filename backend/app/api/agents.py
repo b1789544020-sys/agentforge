@@ -8,26 +8,47 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import _auth_required, get_principal
 
+from app.agent.definitions import (
+    apply_definition,
+    definition_response,
+    resolve_definition,
+    snapshot_dict,
+)
 from app.agent.exporter import (
+    CANONICAL_FORMAT_VERSION,
+    FORMAT_VERSION,
     agents_from_payload,
     build_payload,
     detect_format,
     dump as dump_payload,
     load as load_payload,
 )
+from app.agent.imports import (
+    AgentNameConflictError,
+    preflight_canonical_import,
+    write_canonical_import,
+)
 from app.agent.memory import MemoryItem, MemoryStore
-from app.agent.versions import create_agent_version
+from app.agent.schema import (
+    ResourceMap,
+    masked_secret_report,
+    public_definition,
+    public_legacy_dto,
+)
+from app.agent.versions import create_agent_version, latest_agent_version
 from app.audit import record_audit
 from app.agent.tools import ToolRegistry
 from app.api.schemas import (
     AgentCreate,
     AgentOut,
     AgentUpdate,
+    DefinitionSaveRequest,
     ExportRequest,
     MemoryIn,
     MemoryOut,
@@ -38,7 +59,7 @@ from app.dispatch import submit_gate
 from app.gates.service import create_automatic_gates
 from app.models import Agent, Memory
 from app.rbac import accessible_team_ids, agent_scope_condition, resolve_team_for_create
-from app.secrets import protect_config, redact_config
+from app.secrets import SecretPathConflictError, protect_config
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -69,8 +90,7 @@ def _serialize_agent(agent: Agent) -> dict[str, Any]:
             config = json.loads(agent.config)
         except (TypeError, ValueError):
             config = {}
-    config = redact_config(config)
-    return {
+    return public_legacy_dto({
         "id": agent.id,
         "team_id": agent.team_id,
         "name": agent.name,
@@ -84,7 +104,7 @@ def _serialize_agent(agent: Agent) -> dict[str, Any]:
         "config": config,
         "created_at": agent.created_at,
         "updated_at": agent.updated_at,
-    }
+    })
 
 
 @router.get("", response_model=list[AgentOut])
@@ -151,6 +171,89 @@ async def get_agent(
     return _serialize_agent(agent)
 
 
+@router.get("/{agent_id}/definition")
+async def get_current_definition(
+    agent_id: str, session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    agent = await session.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    version = await latest_agent_version(session, agent_id)
+    if version is None:
+        raise HTTPException(status_code=409, detail="agent has no saved version")
+    return definition_response(version)
+
+
+@router.put("/{agent_id}/definition")
+async def put_current_definition(
+    agent_id: str,
+    payload: DefinitionSaveRequest,
+    request: Request,
+    background: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    agent = await session.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    await session.execute(select(Agent.id).where(Agent.id == agent_id).with_for_update())
+    latest = await latest_agent_version(session, agent_id)
+    if latest is None or latest.id != payload.base_version_id:
+        raise HTTPException(status_code=409, detail={
+            "error": "stale_base_version",
+            "base_version_id": payload.base_version_id,
+            "latest_version_id": latest.id if latest is not None else None,
+            "latest_version_number": latest.version_number if latest is not None else None,
+        })
+    previous_snapshot = snapshot_dict(latest)
+    try:
+        resolved = await resolve_definition(
+            session, agent, payload.definition,
+            resource_map=payload.resource_map,
+            secret_inputs=payload.secret_inputs,
+            previous_config=json.loads(agent.config or "{}"),
+            previous_snapshot=previous_snapshot,
+        )
+    except SecretPathConflictError:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={
+            "error": "invalid_definition", "message": str(exc),
+        }) from exc
+    if not resolved.ok:
+        raise HTTPException(status_code=422, detail={
+            "error": "resource_preflight_failed",
+            "resolved": resolved.resolved,
+            "unresolved": resolved.unresolved,
+            "unsupported_tools": resolved.unsupported_tools,
+        })
+    try:
+        await apply_definition(session, agent, resolved)
+        agent.updated_at = datetime.utcnow()
+        version = await create_agent_version(
+            session, agent, created_by=get_principal(request).user_id,
+        )
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=422, detail={
+            "error": "resource_unavailable", "message": str(exc),
+        }) from exc
+    record_audit(
+        session, request, action="agent.definition.update", target_type="agent",
+        target_id=agent.id, team_id=agent.team_id,
+        detail={"version_id": version.id, "base_version_id": latest.id},
+    )
+    await session.commit()
+    gates = await create_automatic_gates(
+        session, version, triggered_by=get_principal(request).user_id,
+    )
+    for gate in gates:
+        submit_gate(gate.id, background)
+    response = definition_response(version)
+    response["resolved"] = public_legacy_dto(resolved.resolved)
+    response["inherited_secrets"] = resolved.inherited_secrets
+    return response
+
+
 @router.patch("/{agent_id}", response_model=AgentOut)
 async def update_agent(
     agent_id: str,
@@ -214,6 +317,13 @@ _MEDIA_TYPES = {
 }
 
 
+def _validation_errors(exc: ValidationError) -> list[dict[str, Any]]:
+    return [
+        {key: error[key] for key in ("type", "loc", "msg") if key in error}
+        for error in exc.errors(include_url=False, include_input=False)
+    ]
+
+
 def _resolve_export_format(fmt: str | None) -> str:
     fmt = (fmt or "json").lower()
     if fmt not in _MEDIA_TYPES:
@@ -229,6 +339,7 @@ async def export_agents(
     request: Request,
     payload: ExportRequest | None = None,
     fmt: str = Query(default="json"),
+    envelope: int = Query(default=CANONICAL_FORMAT_VERSION),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     """Export agents to a downloadable file (JSON or YAML).
@@ -267,16 +378,25 @@ async def export_agents(
                 detail={"error": "agents not found", "missing_ids": missing},
             )
 
-    payload_out = build_payload(rows)
+    if envelope not in {FORMAT_VERSION, CANONICAL_FORMAT_VERSION}:
+        raise HTTPException(status_code=400, detail="envelope must be 1 or 2")
+    export_rows: list[Any] = list(rows)
+    if envelope == CANONICAL_FORMAT_VERSION:
+        export_rows = []
+        for agent in rows:
+            version = await latest_agent_version(session, agent.id)
+            export_rows.append(public_definition(snapshot_dict(version)) if version is not None else agent)
+    payload_out = build_payload(export_rows, envelope=envelope)
     text = dump_payload(payload_out, fmt)
     filename = (
         f"agentforge-agents-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.{fmt}"
     )
-    return Response(
-        content=text,
-        media_type=_MEDIA_TYPES[fmt],
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    if envelope == FORMAT_VERSION:
+        headers["X-AgentForge-Export-Warning"] = (
+            "legacy envelope omits canonical resources, extensions, and secret metadata"
+        )
+    return Response(content=text, media_type=_MEDIA_TYPES[fmt], headers=headers)
 
 
 @router.post("/import", response_model=dict)
@@ -286,6 +406,9 @@ async def import_agents(
     file: UploadFile = File(...),
     on_conflict: str = Form("skip"),
     fmt: str | None = Form(None),
+    resource_map: str = Form("{}"),
+    secret_inputs: str = Form("{}"),
+    dry_run: bool = Query(False),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Import agents from a previously-exported file.
@@ -319,32 +442,131 @@ async def import_agents(
     try:
         payload = load_payload(text, detected)
         rows = agents_from_payload(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail={
+            "error": "invalid_definition", "errors": _validation_errors(exc),
+        }) from exc
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    created: list[str] = []
-    updated: list[str] = []
-    skipped: list[str] = []
     owner_id = _owner_filter(request)
     scope = await _agent_query_scope(request, session)
     team_id = await resolve_team_for_create(request, session, None)
-    versions: list[Any] = []
+
+    if payload.get("version") == CANONICAL_FORMAT_VERSION:
+        try:
+            raw_map = json.loads(resource_map)
+            raw_inputs = json.loads(secret_inputs)
+            if not isinstance(raw_inputs, dict) or any(
+                not isinstance(key, str) or not isinstance(value, str | type(None))
+                for key, value in raw_inputs.items()
+            ):
+                raise ValueError("secret_inputs must be an object of string/null values")
+            mapping = ResourceMap.model_validate(raw_map)
+            preflight = await preflight_canonical_import(
+                session, rows, on_conflict=on_conflict, owner_id=owner_id,
+                team_id=team_id, scope=scope, resource_map=mapping,
+                secret_inputs=raw_inputs,
+            )
+        except AgentNameConflictError as exc:
+            raise HTTPException(status_code=409, detail={
+                "error": "agent name already exists", "name": exc.name,
+            }) from exc
+        except SecretPathConflictError:
+            raise
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail={
+                "error": "invalid_resource_map", "errors": _validation_errors(exc),
+            }) from exc
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail={
+                "error": "invalid_import_options", "message": str(exc),
+            }) from exc
+        report = preflight.report
+        report["format"] = detected
+        report["dry_run"] = dry_run
+        if dry_run:
+            return public_legacy_dto(report)
+        if not report["ok"]:
+            raise HTTPException(status_code=422, detail={
+                "error": "resource_preflight_failed", **public_legacy_dto(report),
+            })
+        try:
+            written = await write_canonical_import(
+                session, preflight, created_by=get_principal(request).user_id,
+            )
+        except ValueError as exc:
+            await session.rollback()
+            raise HTTPException(status_code=422, detail={
+                "error": "resource_unavailable", "message": str(exc),
+            }) from exc
+        for plan, version in written:
+            record_audit(
+                session, request, action="agent.import", target_type="agent",
+                target_id=plan.agent.id, team_id=plan.agent.team_id,
+                detail={"version_id": version.id, "action": plan.action},
+            )
+        await session.commit()
+        for _, version in written:
+            gates = await create_automatic_gates(
+                session, version, triggered_by=get_principal(request).user_id,
+            )
+            for gate in gates:
+                submit_gate(gate.id, background)
+        return public_legacy_dto(report)
+
+    plans: list[tuple[dict[str, Any], Agent | None, str, dict[str, Any]]] = []
+    missing_secrets: list[dict[str, Any]] = []
+    inherited_secrets: list[dict[str, Any]] = []
     for row in rows:
         name = row["name"]
         stmt = select(Agent).where(Agent.name == name)
         if scope is not None:
             stmt = stmt.where(scope)
         existing = (await session.execute(stmt)).scalars().first()
+        if existing is not None and on_conflict == "error":
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "agent name already exists", "name": name},
+            )
+        action = "create" if existing is None else (
+            "skip" if on_conflict == "skip" else "update"
+        )
+        previous = json.loads(existing.config or "{}") if existing is not None else None
+        protected = {} if action == "skip" else protect_config(row.get("config") or {}, previous)
+        if action != "skip":
+            report = masked_secret_report(row.get("config") or {}, previous)
+            missing_secrets.extend({**item, "agent": name} for item in report["missing_secrets"])
+            inherited_secrets.extend(
+                {**item, "agent": name} for item in report["inherited_secrets"]
+            )
+        plans.append((row, existing, action, protected))
+
+    created = [row["name"] for row, _, action, _ in plans if action == "create"]
+    updated = [row["name"] for row, _, action, _ in plans if action == "update"]
+    skipped = [row["name"] for row, _, action, _ in plans if action == "skip"]
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "format": detected,
+            "on_conflict": on_conflict,
+            "imported": len(created),
+            "updated": len(updated),
+            "skipped": len(skipped),
+            "created": created,
+            "updated_list": updated,
+            "skipped_list": skipped,
+            "missing_secrets": missing_secrets,
+            "inherited_secrets": inherited_secrets,
+        }
+
+    versions: list[Any] = []
+    for row, existing, action, protected in plans:
+        if action == "skip":
+            continue
+        name = row["name"]
         if existing is not None:
-            if on_conflict == "skip":
-                skipped.append(name)
-                continue
-            if on_conflict == "error":
-                raise HTTPException(
-                    status_code=409,
-                    detail={"error": "agent name already exists", "name": name},
-                )
-            # overwrite
             existing.description = row.get("description")
             existing.system_prompt = row.get("system_prompt")
             existing.model = row.get("model", existing.model)
@@ -352,16 +574,12 @@ async def import_agents(
             existing.temperature = row.get("temperature", existing.temperature)
             existing.max_steps = row.get("max_steps", existing.max_steps)
             existing.tools = json.dumps(row.get("tools") or [], ensure_ascii=False)
-            existing.config = json.dumps(
-                protect_config(row.get("config") or {}, json.loads(existing.config or "{}")),
-                ensure_ascii=False,
-            )
+            existing.config = json.dumps(protected, ensure_ascii=False)
             existing.updated_at = datetime.utcnow()
             await session.flush()
             versions.append(await create_agent_version(
                 session, existing, created_by=get_principal(request).user_id
             ))
-            updated.append(name)
             continue
 
         agent = Agent(
@@ -380,7 +598,7 @@ async def import_agents(
             ),
             max_steps=row.get("max_steps") or 20,
             tools=json.dumps(row.get("tools") or [], ensure_ascii=False),
-            config=json.dumps(protect_config(row.get("config") or {}), ensure_ascii=False),
+            config=json.dumps(protected, ensure_ascii=False),
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )
@@ -389,7 +607,6 @@ async def import_agents(
         versions.append(await create_agent_version(
             session, agent, created_by=get_principal(request).user_id
         ))
-        created.append(name)
 
     await session.commit()
     for version in versions:
@@ -400,6 +617,7 @@ async def import_agents(
             submit_gate(gate.id, background)
     return {
         "ok": True,
+        "dry_run": False,
         "format": detected,
         "on_conflict": on_conflict,
         "imported": len(created),
@@ -408,6 +626,8 @@ async def import_agents(
         "created": created,
         "updated_list": updated,
         "skipped_list": skipped,
+        "missing_secrets": missing_secrets,
+        "inherited_secrets": inherited_secrets,
     }
 
 

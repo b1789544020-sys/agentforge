@@ -1,0 +1,85 @@
+﻿# Memory TTL / SQLite 生命周期失败摘录（非完整日志）
+
+_______________ test_periodic_cleanup_runs_and_can_be_cancelled _______________
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\engine\base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\engine\default.py:941: in do_execute
+    cursor.execute(statement, parameters)
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:147: in execute
+    self._adapt_connection._handle_exception(error)
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:298: in _handle_exception
+    raise error
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:129: in execute
+    self.await_(_cursor.execute(operation, parameters))
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+.scratch\runtime\venv-py312\Lib\site-packages\aiosqlite\cursor.py:48: in execute
+    await self._execute(self._cursor.execute, sql, parameters)
+.scratch\runtime\venv-py312\Lib\site-packages\aiosqlite\cursor.py:40: in _execute
+    return await self._conn._execute(fn, *args, **kwargs)
+.scratch\runtime\venv-py312\Lib\site-packages\aiosqlite\core.py:132: in _execute
+    return await future
+.scratch\runtime\venv-py312\Lib\site-packages\aiosqlite\core.py:115: in run
+    result = function()
+E   sqlite3.OperationalError: no such table: memories
+
+The above exception was the direct cause of the following exception:
+backend\tests\test_memory_ttl.py:159: in test_periodic_cleanup_runs_and_can_be_cancelled
+    assert await db_session.get(Memory, expired.id) is None
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\ext\asyncio\session.py:604: in get
+    return await greenlet_spawn(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\orm\session.py:3693: in get
+    return self._get_impl(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\orm\session.py:3873: in _get_impl
+    return db_load_fn(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\orm\loading.py:694: in load_on_pk_identity
+    session.execute(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\orm\session.py:2362: in execute
+    return self._execute_internal(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\orm\session.py:2247: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\orm\context.py:305: in orm_execute_statement
+    result = conn.execute(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\engine\base.py:1418: in execute
+    return meth(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\sql\elements.py:515: in _execute_on_connection
+    return connection._execute_clauseelement(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\engine\base.py:1640: in _execute_clauseelement
+    ret = self._execute_context(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\engine\base.py:1846: in _execute_context
+    return self._exec_single_context(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\engine\base.py:1986: in _exec_single_context
+    self._handle_dbapi_exception(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\engine\base.py:2355: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\engine\base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\engine\default.py:941: in do_execute
+    cursor.execute(statement, parameters)
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:147: in execute
+    self._adapt_connection._handle_exception(error)
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:298: in _handle_exception
+    raise error
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:129: in execute
+    self.await_(_cursor.execute(operation, parameters))
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+.scratch\runtime\venv-py312\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+.scratch\runtime\venv-py312\Lib\site-packages\aiosqlite\cursor.py:48: in execute
+    await self._execute(self._cursor.execute, sql, parameters)
+.scratch\runtime\venv-py312\Lib\site-packages\aiosqlite\cursor.py:40: in _execute
+    return await self._conn._execute(fn, *args, **kwargs)
+.scratch\runtime\venv-py312\Lib\site-packages\aiosqlite\core.py:132: in _execute
+    return await future
+.scratch\runtime\venv-py312\Lib\site-packages\aiosqlite\core.py:115: in run
+    result = function()
+E   sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such table: memories
+
+=========================== short test summary info ===========================
+FAILED backend/tests/test_memory_ttl.py::test_periodic_cleanup_runs_and_can_be_cancelled
+1 failed, 349 passed, 1313 warnings in 162.93s (0:02:42)

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.schema import public_legacy_dto
 from app.agent.versions import create_agent_version, runtime_snapshot
 from app.api.agents import _serialize_agent
 from app.api.auth import get_principal
@@ -19,7 +20,7 @@ from app.dispatch import submit_gate
 from app.gates.service import create_automatic_gates
 from app.models import Agent, AgentTemplate, AgentTemplateVersion, EvalCase
 from app.rbac import accessible_team_ids, resolve_team_for_create, scoped_agent_ids
-from app.secrets import protect_config, redact_config
+from app.secrets import protect_config
 from app.templates import BUILTIN_TEMPLATES
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -52,14 +53,14 @@ def _json(value: str | None, fallback: Any) -> Any:
 
 def _version_out(row: AgentTemplateVersion) -> dict[str, Any]:
     return {"id": row.id, "template_id": row.template_id, "version_number": row.version_number,
-            "snapshot": redact_config(_json(row.snapshot, {})), "created_by": row.created_by,
+            "snapshot": public_legacy_dto(_json(row.snapshot, {})), "created_by": row.created_by,
             "created_at": row.created_at}
 
 
 def _custom_out(template: AgentTemplate, version: AgentTemplateVersion) -> dict[str, Any]:
     return {"id": template.id, "name": template.name, "description": template.description,
             "category": template.category, "team_id": template.team_id, "builtin": False,
-            "version_number": version.version_number, "snapshot": redact_config(_json(version.snapshot, {})),
+            "version_number": version.version_number, "snapshot": public_legacy_dto(_json(version.snapshot, {})),
             "examples": _json(version.snapshot, {}).get("examples", [])}
 
 

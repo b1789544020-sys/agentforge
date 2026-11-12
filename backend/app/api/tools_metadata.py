@@ -288,7 +288,12 @@ async def upsert_metadata(
     return merge_metadata(_spec_to_dict(spec), row)
 
 
-@router.delete("/{name}/metadata", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])
+@router.delete(
+    "/{name}/metadata",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    dependencies=[Depends(require_admin)],
+)
 async def delete_metadata(
     name: str, session: AsyncSession = Depends(get_session)
 ) -> None:

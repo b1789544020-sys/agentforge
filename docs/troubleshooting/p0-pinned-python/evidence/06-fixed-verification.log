@@ -1,0 +1,66 @@
+# P0/16.1 修复后验证摘要
+# 日期：2026-11-10；路径已泛化。以下均为实际执行结果，不是预期值。
+
+[PINNED INSTALL]
+Python: 3.12.10
+COMMAND: <venv>/Scripts/python.exe -m pip check
+EXIT_CODE=0
+OUTPUT: No broken requirements found.
+REQUIREMENTS_CHANGED=false
+
+[204 ROUTE CONTRACT — PINNED FASTAPI 0.115.6]
+COMMAND: <venv>/Scripts/python.exe -m pytest backend/tests/test_tools_metadata.py -q
+EXIT_CODE=0
+OUTPUT: 12 passed, 4 warnings in 6.51s
+PUBLIC_OPENAPI_ASSERTION: 204 response has no content
+
+[204 ROUTE CONTRACT — GLOBAL FASTAPI 0.141.1]
+COMMAND: <python314> -m pytest backend/tests/test_tools_metadata.py -q
+EXIT_CODE=0
+OUTPUT: 12 passed, 4 warnings in 5.79s
+
+[PINNED APPLICATION ROUTE INSPECTION]
+204_ROUTE_COUNT=14
+ALL_RESPONSE_MODELS_NONE=true
+NOTE: 这是当前应用路由表检查；自动化回归直接检查工具元数据的公开 OpenAPI 契约。
+
+[ASYNC ORDER REGRESSION — BEFORE FINAL DB FIX]
+COMMAND: <venv>/Scripts/python.exe -m pytest backend/tests/test_agent_io.py backend/tests/test_anthropic_client.py backend/tests/test_api.py -x -q
+EXIT_CODE=0
+OUTPUT: 42 passed, 81 warnings in 21.74s
+NOTE: 当时仍有 loop-scope 未设置警告；最终两处 pytest 配置已同步，最终完整日志中该警告为 0。
+
+[MEMORY TTL — AFTER PER-TEST FILE DB FIX]
+COMMAND: <venv>/Scripts/python.exe -m pytest backend/tests/test_memory_ttl.py -q
+EXIT_CODE=0
+OUTPUT: 4 passed, 35 warnings in 2.31s
+PRODUCT_ASSERTIONS_CHANGED=false
+
+[PINNED FULL SUITE — FINAL PUBLIC OPENAPI CONTRACT VERSION]
+COMMAND: <venv>/Scripts/python.exe -m pytest -q
+LOG: python312-backend-full-verified.log
+EXIT_CODE=0
+OUTPUT: 350 passed, 1313 warnings in 182.98s (0:03:02)
+FAILED=0
+LOOP_SCOPE_UNSET_WARNINGS=0
+NO_CURRENT_EVENT_LOOP_ERRORS=0
+
+[GLOBAL FULL SUITE — FINAL PUBLIC OPENAPI CONTRACT VERSION]
+COMMAND: <python314> -m pytest -q
+LOG: python314-backend-full-clean.log
+EXIT_CODE=0
+OUTPUT: 350 passed, 1317 warnings in 130.10s (0:02:10)
+FAILED=0
+LOOP_SCOPE_UNSET_WARNINGS=0
+NO_CURRENT_EVENT_LOOP_ERRORS=0
+
+[STATIC CHECKS]
+COMMAND: <venv>/Scripts/python.exe -m ruff check --select E9,F63,F7,F82 <seven changed Python files>
+EXIT_CODE=0
+OUTPUT: All checks passed!
+COMMAND: <venv>/Scripts/python.exe -m compileall -q backend/app backend/tests
+EXIT_CODE=0
+COMMAND: git diff --check
+EXIT_CODE=0
+SCOPED_FULL_RUFF_STYLE_CHECK: exit 1, 27 existing import/style findings; not reported as green and not bulk-auto-fixed.
+EVIDENCE_SECRET_PATTERN_HITS=0

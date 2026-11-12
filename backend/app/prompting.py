@@ -1,6 +1,7 @@
 """Strict, sandboxed Jinja prompt rendering and version resolution."""
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -28,7 +29,23 @@ async def resolve_system_prompt(
     except (TypeError, ValueError):
         config = {}
     template_id = config.get("prompt_template_id")
-    if template_id:
+    runtime_snapshot = getattr(agent, "_runtime_snapshot", None)
+    pinned_prompt = None
+    if isinstance(runtime_snapshot, dict):
+        resources = runtime_snapshot.get("resources") or {}
+        pinned_prompt = resources.get("prompt")
+        if template_id and not isinstance(pinned_prompt, dict):
+            raise ValueError("schema v1 snapshot is missing its pinned prompt")
+    if isinstance(pinned_prompt, dict):
+        content = pinned_prompt.get("content")
+        expected_hash = pinned_prompt.get("content_sha256")
+        if not isinstance(content, str) or not isinstance(expected_hash, str):
+            raise ValueError("pinned prompt content or hash is missing")
+        actual_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        if actual_hash != expected_hash:
+            raise ValueError("pinned prompt content hash mismatch")
+        raw = content
+    elif template_id:
         template = await session.get(PromptTemplate, template_id)
         if template is None or template.agent_id != agent.id:
             raise ValueError("bound prompt template does not belong to this agent")

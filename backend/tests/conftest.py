@@ -1,46 +1,60 @@
 """Shared pytest fixtures."""
 from __future__ import annotations
 
-import asyncio
 import os
 import tempfile
+import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# Force an in-memory DB before any application import so config picks it up.
-os.environ.setdefault("AGENTFORGE_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+# Use an isolated file before any application import so config picks it up.
+# An in-memory database uses StaticPool in app.database, which makes concurrent
+# AsyncSessions share one SQLite connection and lets their transactions
+# interfere.  A per-run file gives each session a real, independent connection.
+_TEST_TEMP_DIR = tempfile.TemporaryDirectory(prefix="agentforge-pytest-", ignore_cleanup_errors=True)
+_TEST_DB = Path(_TEST_TEMP_DIR.name) / "global.sqlite3"
+os.environ.setdefault(
+    "AGENTFORGE_DATABASE_URL", f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
+)
 os.environ.setdefault("AGENTFORGE_LLM_PROVIDER", "mock")
+# Most tests use Base.metadata.create_all through the fixture below.  Running
+# Alembic again in every TestClient lifespan would replay the baseline over
+# those tables.  Dedicated Alembic tests still run real migrations explicitly.
+os.environ.setdefault("AGENTFORGE_RUN_MIGRATIONS", "false")
 
-from app.database import Base, get_session  # noqa: E402  (after env setup)
+from sqlalchemy import event  # noqa: E402  (after env setup)
+
+from app.database import Base, async_engine, get_session  # noqa: E402
 from app.main import create_app  # noqa: E402
 
 
-@pytest.fixture(scope="session")
-def event_loop() -> AsyncIterator[asyncio.AbstractEventLoop]:
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+if async_engine.url.get_backend_name() == "sqlite":
+
+    @event.listens_for(async_engine.sync_engine, "connect")
+    def _set_global_sqlite_pragmas(dbapi_connection, _):
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.execute("PRAGMA journal_mode=WAL")
+        finally:
+            cursor.close()
 
 
 @pytest_asyncio.fixture
 async def db_session() -> AsyncIterator[AsyncSession]:
-    # Concurrent sessions against a single in-memory SQLite is fragile
-    # under aiosqlite (each fresh connection sees a private DB, and
-    # StaticPool + WAL still races on writes).  The robust fix is to
-    # use SQLite's shared-cache URI so *every* connection points at
-    # the same in-memory database, plus a connect-listener that
-    # installs ``busy_timeout`` on every new connection (PRAGMA
-    # values are per-connection in SQLite).  This lets the eval
-    # runner fan out cases onto fresh sessions without
-    # "database is locked" errors and lets the memory cleanup
-    # background task share the test's in-memory database.
+    # A per-test file gives concurrent AsyncSessions independent connections
+    # without shared-cache lifetime coupling. In particular, closing the last
+    # connection to a named in-memory database destroys its schema; the memory
+    # cleanup test closes and reopens its session on every background cycle.
+    # Install busy_timeout on every connection because PRAGMA values are local.
     from sqlalchemy import event
 
+    db_path = Path(_TEST_TEMP_DIR.name) / f"db-session-{uuid.uuid4().hex}.sqlite3"
     engine = create_async_engine(
-        "sqlite+aiosqlite:///file:agentforge_conftest?mode=memory&cache=shared&uri=true",
+        f"sqlite+aiosqlite:///{db_path.as_posix()}",
         future=True,
         connect_args={"check_same_thread": False},
     )
@@ -77,7 +91,7 @@ async def test_engine_factory():
     from sqlalchemy import event
 
     engine = create_async_engine(
-        "sqlite+aiosqlite:///file:agentforge_runner?mode=memory&cache=shared&uri=true",
+        f"sqlite+aiosqlite:///file:agentforge_runner_{uuid.uuid4().hex}?mode=memory&cache=shared&uri=true",
         future=True,
         connect_args={"check_same_thread": False},
     )
@@ -130,10 +144,9 @@ async def _ensure_schema():
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
-    # Drop tables after each test for isolation when using a file-backed DB.
-    if not async_engine.url.database or async_engine.url.database == ":memory:":
-        # In-memory DB: nothing to drop; the engine is shared across tests.
-        return
+    # The global engine is shared by the whole pytest process.  Recreate the
+    # schema at the start of each test and drop it afterwards so users, agents
+    # and other rows cannot leak into later tests on any database backend.
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
 

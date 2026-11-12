@@ -96,6 +96,12 @@ async def test_get_enabled_tool_names_unknown_tool(db_session):
 # ---------------------------------------------------------------------------
 # HTTP round-trip
 # ---------------------------------------------------------------------------
+def test_delete_metadata_declares_empty_response(app):
+    """A 204 route has no response body in the public OpenAPI contract."""
+    response = app.openapi()["paths"]["/api/tools/{name}/metadata"]["delete"][
+        "responses"
+    ]["204"]
+    assert "content" not in response
 
 
 @pytest.mark.asyncio

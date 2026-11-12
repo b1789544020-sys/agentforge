@@ -88,9 +88,11 @@ async def test_run_shell_missing_executable_does_not_crash() -> None:
     sb = LocalSandbox()
     res = await sb.run_shell("definitely_not_a_real_binary_xyz_123", [], timeout_s=5)
     if sys.platform == "win32":
-        # cmd /c fallback returns non-zero + "not recognized" on stderr.
+        # The cmd fallback's error text follows the Windows display language
+        # and OEM code page.  The stable contract is a structured failure that
+        # identifies the requested executable, not an English-only message.
         assert res.exit_code != 0
-        assert "not recognized" in res.stderr.lower() or "not found" in res.stderr.lower()
+        assert "definitely_not_a_real_binary_xyz_123" in res.stderr
     else:
         # POSIX: FileNotFoundError -> SandboxError surfaces a clean message.
         assert res.exit_code != 0
@@ -154,10 +156,7 @@ async def test_shell_exec_missing_executable_returns_error_dict() -> None:
     if sys.platform == "win32":
         assert result["exit_code"] != 0
         assert result["timed_out"] is False
-        assert (
-            "not recognized" in result["stderr"].lower()
-            or "not found" in result["stderr"].lower()
-        )
+        assert "definitely_not_a_real_binary_abc_456" in result["stderr"]
     else:
         assert result["exit_code"] == -1
         assert (

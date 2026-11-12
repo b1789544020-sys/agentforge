@@ -1,0 +1,57 @@
+﻿# pytest-asyncio 0.25 顺序失败摘录（非完整日志）
+
+<venv>\Lib\site-packages\pytest_asyncio\plugin.py:207: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+............................................FFF......................... [ 20%]
+.........FFF.FFFFF.FFF.F.FFFFFFFF.FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF..FF.. [ 41%]
+.....FFFFFFFFFFFFFFFFFF................................................. [ 61%]
+....FFFFFFFFFFRRRFRRRFRRRFRRRFRRRFRRRFRRRFRRRF.RRRFRRRFRRRF............. [ 72%]
+.........................FF..FFF..FFF.F..FFFFFFFFFF.F.FFF..F.....F..FFFF [ 93%]
+FRRRFF...FFF.FFFFFRRRFRRRFRRRFRRRF....                                   [100%]
+================================== FAILURES ===================================
+_________________________________ test_health _________________________________
+.scratch\runtime\venv-py312\Lib\site-packages\pytest_asyncio\plugin.py:533: in runtest
+    super().runtest()
+.scratch\runtime\venv-py312\Lib\site-packages\pytest_asyncio\plugin.py:1023: in inner
+    _loop = _get_event_loop_no_warn()
+.scratch\runtime\venv-py312\Lib\site-packages\pytest_asyncio\plugin.py:953: in _get_event_loop_no_warn
+    return asyncio.get_event_loop()
+.scratch\runtime\python-3.12.10\Lib\asyncio\events.py:702: in get_event_loop
+    raise RuntimeError('There is no current event loop in thread %r.'
+E   RuntimeError: There is no current event loop in thread 'MainThread'.
+____________________________ test_agent_lifecycle _____________________________
+.scratch\runtime\venv-py312\Lib\site-packages\pytest_asyncio\plugin.py:533: in runtest
+    super().runtest()
+.scratch\runtime\venv-py312\Lib\site-packages\pytest_asyncio\plugin.py:1023: in inner
+    _loop = _get_event_loop_no_warn()
+.scratch\runtime\venv-py312\Lib\site-packages\pytest_asyncio\plugin.py:953: in _get_event_loop_no_warn
+    return asyncio.get_event_loop()
+.scratch\runtime\python-3.12.10\Lib\asyncio\events.py:702: in get_event_loop
+    raise RuntimeError('There is no current event loop in thread %r.'
+E   RuntimeError: There is no current event loop in thread 'MainThread'.
+_______________________________ test_eval_basic _______________________________
+
+# ……同类 MainThread event-loop 失败省略……
+
+FAILED backend/tests/test_tools.py::test_calculator_sandbox_path - RuntimeErr...
+FAILED backend/tests/test_tools_metadata.py::test_get_enabled_tool_names_default
+FAILED backend/tests/test_tools_metadata.py::test_get_enabled_tool_names_with_disabled_row
+FAILED backend/tests/test_tools_metadata.py::test_get_enabled_tool_names_unknown_tool
+FAILED backend/tests/test_tools_metadata.py::test_http_list_tools_merges_metadata
+FAILED backend/tests/test_tools_metadata.py::test_http_upsert_unknown_tool_returns_404
+FAILED backend/tests/test_tools_metadata.py::test_http_get_single_tool - Runt...
+FAILED backend/tests/test_tools_metadata.py::test_http_get_unknown_tool_returns_404
+FAILED backend/tests/test_tools_metadata.py::test_http_delete_idempotent - Ru...
+FAILED backend/tests/test_ws.py::test_subscribe_and_publish - RuntimeError: T...
+FAILED backend/tests/test_ws.py::test_unsubscribe_is_idempotent - RuntimeErro...
+FAILED backend/tests/test_ws.py::test_channel_pruned_when_last_subscriber_leaves
+FAILED backend/tests/test_ws.py::test_slow_consumer_is_dropped - RuntimeError...
+140 failed, 210 passed, 154 warnings, 48 rerun in 217.72s (0:03:37)
+sys:1: RuntimeWarning: coroutine 'test_subscribe_and_publish' was never awaited
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+sys:1: RuntimeWarning: coroutine 'test_channel_pruned_when_last_subscriber_leaves' was never awaited
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+sys:1: RuntimeWarning: coroutine 'test_slow_consumer_is_dropped' was never awaited
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback

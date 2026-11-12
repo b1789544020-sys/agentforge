@@ -179,6 +179,7 @@ class CaseEvalResult:
     # The index of this case in the *original* request (preserves
     # the caller's ordering, not the DB insertion order).
     index: int = 0
+    run_id: str = ""
 
 
 @dataclass
@@ -647,6 +648,7 @@ class EvalRunner:
                             "error": c.error,
                             "tool_calls": c.tool_calls,
                             "score_details": c.score_details,
+                            "run_id": c.run_id,
                         }
                         for c in cases
                     ],
@@ -700,6 +702,7 @@ class EvalRunner:
             tokens = 0
             tool_calls: list[dict[str, Any]] = []
             status = "failed"
+            run_id = ""
             try:
                 if await self._cancellation_requested():
                     status = "cancelled"
@@ -711,6 +714,7 @@ class EvalRunner:
                     output = result.output
                     tokens = result.total_tokens
                     status = result.status or "completed"
+                    run_id = result.run_id
                 if error is None:
                     # Pull tool calls out of the trace for the UI.
                     for step in getattr(result, "steps", []) or []:
@@ -738,7 +742,7 @@ class EvalRunner:
                 logger.exception("Eval case failed: %s", exc)
             duration_ms = int((time.perf_counter() - start) * 1000)
             run_result = AgentRunResult(
-                run_id="",
+                run_id=run_id,
                 output=output,
                 status=status,
                 total_tokens=tokens,
@@ -772,6 +776,7 @@ class EvalRunner:
                         **existing_meta,
                         "expected_tool": test_case.expected_tool,
                         "index": index,
+                        "run_id": run_id,
                     }
                 ),
                 index=index,
@@ -808,6 +813,7 @@ class EvalRunner:
                 tool_calls=tool_calls,
                 score_details=score.details,
                 index=index,
+                run_id=run_id,
             )
 
     # ---- helpers -----------------------------------------------------

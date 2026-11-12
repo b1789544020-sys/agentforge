@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import AgentConfig from "./pages/AgentConfig";
-import AgentRun from "./pages/AgentRun";
+import AgentRun, { type RunFocus } from "./pages/AgentRun";
+import AgentStudio from "./pages/AgentStudio";
 import Evaluation from "./pages/Evaluation";
 import PromptTemplates from "./pages/PromptTemplates";
 import QualityGatePanel from "./pages/QualityGates";
@@ -12,17 +13,19 @@ import DeliveryCenter from "./pages/DeliveryCenter";
 import KnowledgePage from "./pages/Knowledge";
 import { Auth, type User } from "./api/client";
 
-type Tab = "config" | "run" | "eval" | "prompts" | "gates" | "teams" | "operations" | "delivery" | "knowledge";
+type Tab = "config" | "studio" | "run" | "eval" | "prompts" | "gates" | "teams" | "operations" | "delivery" | "knowledge";
 
 export default function App() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("config");
+  const [runFocus, setRunFocus] = useState<RunFocus | null>(null);
   const [user, setUser] = useState<User | null>(null);
   useEffect(() => { Auth.me().then(setUser).catch(() => setUser(null)); }, []);
   const can = (permission: string) => !user || !!user.permissions?.includes("*") || !!user.permissions?.includes(permission);
 
   const TABS: { id: Tab; label: string }[] = [
     { id: "config", label: t("app.tab_config") },
+    { id: "studio", label: t("app.tab_studio") },
     { id: "run", label: t("app.tab_run") },
     { id: "eval", label: t("app.tab_eval") },
     { id: "prompts", label: t("app.tab_prompts") },
@@ -59,10 +62,14 @@ export default function App() {
 
       <main>
         {tab === "config" && <AgentConfig canCreate={can("agent:create")} canDelete={can("agent:delete")} />}
-        {tab === "run" && <AgentRun />}
+        {tab === "studio" && <AgentStudio />}
+        {tab === "run" && <AgentRun focus={runFocus} />}
         {tab === "eval" && <Evaluation />}
         {tab === "prompts" && <PromptTemplates />}
-        {tab === "gates" && <QualityGatePanel />}
+        {tab === "gates" && <QualityGatePanel onOpenRun={(agentId, runId, versionId) => {
+          setRunFocus({ agentId, runId, versionId, key: Date.now() });
+          setTab("run");
+        }} />}
         {tab === "teams" && <TeamManagement permissions={user?.permissions || []} />}
         {tab === "operations" && <OperationsPage permissions={user?.permissions || []} />}
         {tab === "delivery" && <DeliveryCenter />}

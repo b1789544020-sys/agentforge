@@ -472,7 +472,7 @@ def calculator(expression: str) -> str:
 **步骤 0：把 AgentForge 装到你的电脑上**
 
 1. **装 Docker Desktop**：去 docker.com 下载 Windows 版，装完双击启动。等鲸鱼图标变绿。
-2. **确认 .env 文件存在**：打开 `C:\Users\86159\Desktop\agentforge` 文件夹，找一个叫 `.env` 的文件（**没有扩展名**）。
+2. **确认 .env 文件存在**：打开项目根目录 `<PROJECT_ROOT>`，找一个叫 `.env` 的文件（**没有扩展名**）。
    - 如果没有就**右键 → 新建 → 文本文档** → 改名 `.env`（Windows 不让改就先打开"查看"→ 勾"文件扩展名"）
    - 用记事本打开，粘贴：
      ```

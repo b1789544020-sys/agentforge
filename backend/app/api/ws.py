@@ -121,45 +121,51 @@ async def stream_run(websocket: WebSocket, agent_id: str, run_id: str) -> None:
     }
     await websocket.accept(subprotocol="agentforge" if "agentforge" in offered_protocols else None)
 
-    # Push a snapshot of what we already know.  Steps are ordered by
-    # index so the front-end can append them straight onto the
-    # trace list with no re-sorting.
-    async with async_session_factory() as session:
-        run = await session.get(Run, run_id)
-        steps = (
-            await session.execute(
-                select(Step).where(Step.run_id == run_id).order_by(Step.index.asc())
-            )
-        ).scalars().all()
-        snapshot = {
-            "event": "run.snapshot",
-            "run": _serialize_run(run, steps),
-        }
-    await _send(websocket, snapshot)
-
-    # If the run already terminated before the client connected
-    # there's nothing left to stream; emit ``run.complete`` once
-    # so the client can drop into its terminal UI.
-    if run is not None and run.status in _TERMINAL_STATUSES:
-        await _send(
-            websocket,
-            {
-                "event": "run.complete",
-                "run_id": run_id,
-                "agent_id": agent_id,
-                "status": run.status,
-                "output": run.output,
-                "total_tokens": run.total_tokens,
-                "duration_ms": run.duration_ms,
-                "step_count": run.step_count,
-                "error": run.error,
-            },
-        )
-        await websocket.close()
-        return
-
+    # Subscribe *before* reading the snapshot.  A fast Mock/local run can
+    # publish run.complete after the snapshot query but before a later
+    # subscription; subscribing afterwards used to lose that terminal event
+    # and leave the browser running forever.  Events queue while the snapshot
+    # is sent, so the client still observes the snapshot first.  Duplicate
+    # steps are harmless because the frontend de-duplicates them by id.
     queue = await broadcaster.subscribe(run_id)
     drop_pruned = False
+    try:
+        async with async_session_factory() as session:
+            run = await session.get(Run, run_id)
+            steps = (
+                await session.execute(
+                    select(Step).where(Step.run_id == run_id).order_by(Step.index.asc())
+                )
+            ).scalars().all()
+            snapshot = {
+                "event": "run.snapshot",
+                "run": _serialize_run(run, steps),
+            }
+        await _send(websocket, snapshot)
+
+        # If the run was already terminal when the snapshot was read, emit a
+        # fresh terminal event.  Any queued copy is discarded with the queue.
+        if run is not None and run.status in _TERMINAL_STATUSES:
+            await _send(
+                websocket,
+                {
+                    "event": "run.complete",
+                    "run_id": run_id,
+                    "agent_id": agent_id,
+                    "status": run.status,
+                    "output": run.output,
+                    "total_tokens": run.total_tokens,
+                    "duration_ms": run.duration_ms,
+                    "step_count": run.step_count,
+                    "error": run.error,
+                },
+            )
+            await websocket.close()
+            await broadcaster.unsubscribe(run_id, queue)
+            return
+    except BaseException:
+        await broadcaster.unsubscribe(run_id, queue)
+        raise
 
     async def drain_broadcaster() -> None:
         """Forward every queued broadcast to the WebSocket as JSON."""

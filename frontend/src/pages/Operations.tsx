@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Operations, type AlertEvent, type AlertRule, type CostResponse, type FeedbackItem, type MetricsResponse } from "../api/client";
+import { Operations, type AlertEvent, type AlertRule, type CostResponse, type FeedbackItem, type FeedbackResolutionItem, type MetricsResponse } from "../api/client";
 import { useAgentStore } from "../stores/agentStore";
 
 export default function OperationsPage({ permissions = ["*"] }: { permissions?: string[] }) {
@@ -15,11 +15,15 @@ export default function OperationsPage({ permissions = ["*"] }: { permissions?: 
   const [events, setEvents] = useState<AlertEvent[]>([]);
   const [corrections, setCorrections] = useState<Record<string, string>>({});
   const [suiteIds, setSuiteIds] = useState<Record<string, string>>({});
+  const [reviewGateIds, setReviewGateIds] = useState<Record<string, string>>({});
+  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
+  const [resolutionHistory, setResolutionHistory] = useState<Record<string, FeedbackResolutionItem[]>>({});
   const [ruleName, setRuleName] = useState("运行失败率告警");
   const [ruleKind, setRuleKind] = useState("failure_rate");
   const [threshold, setThreshold] = useState(0.2);
   const [error, setError] = useState("");
   const globalAdmin = permissions.includes("*");
+  const canResolve = globalAdmin || permissions.includes("approval:manage");
 
   useEffect(() => { loadAgents(); }, [loadAgents]);
   useEffect(() => {
@@ -30,18 +34,35 @@ export default function OperationsPage({ permissions = ["*"] }: { permissions?: 
     Promise.all([
       Operations.metrics({ ...params, group }), Operations.cost(params), Operations.feedback(),
       Operations.rules(), Operations.events(),
-    ]).then(([metricData, costData, feedbackData, ruleData, eventData]) => {
+    ]).then(async ([metricData, costData, feedbackData, ruleData, eventData]) => {
       setMetrics(metricData); setCost(costData); setFeedback(feedbackData); setRules(ruleData); setEvents(eventData);
+      const histories = await Promise.all(feedbackData.map(async (row) => [row.id, await Operations.resolutions(row.id)] as const));
+      setResolutionHistory(Object.fromEntries(histories));
       setError("");
     }).catch((reason) => setError(String(reason)));
   }, [agentId, teamId, model, group]);
 
   const convert = async (id: string) => {
-    const answer = corrections[id]?.trim();
+    const answer = (corrections[id] ?? feedback.find((row) => row.id === id)?.expected_answer ?? "").trim();
     if (!answer) { setError("请先填写人工修正后的期望答案"); return; }
     try {
       await Operations.convertFeedback(id, answer, suiteIds[id]?.trim() || undefined);
       setFeedback(await Operations.feedback());
+    } catch (reason) { setError(String(reason)); }
+  };
+  const resolve = async (row: FeedbackItem, verdict: FeedbackResolutionItem["verdict"]) => {
+    const gateRunId = reviewGateIds[row.id]?.trim();
+    const note = reviewNotes[row.id]?.trim();
+    if (!gateRunId || !note || !row.eval_case_id) {
+      setError("人工复核需要 GateRun ID、复核理由和已关联的 EvalCase"); return;
+    }
+    try {
+      await Operations.resolveFeedback(row.id, {
+        gate_run_id: gateRunId, case_id: row.eval_case_id, verdict, note,
+      });
+      const history = await Operations.resolutions(row.id);
+      setResolutionHistory((current) => ({ ...current, [row.id]: history }));
+      setError("");
     } catch (reason) { setError(String(reason)); }
   };
   const createRule = async () => {
@@ -97,13 +118,27 @@ export default function OperationsPage({ permissions = ["*"] }: { permissions?: 
         {!feedback.length && <p className="muted">暂无负面反馈</p>}
         {feedback.map((row) => <div className="gate-case" key={row.id}>
           <p><strong>输入：</strong>{row.context_snapshot.input}</p><p><strong>输出：</strong>{row.context_snapshot.output}</p>
-          <small className="muted">版本：{row.context_snapshot.agent_version_id || "legacy"} {row.eval_case_id && "· 已转用例"}</small>
+          <small className="muted">精确来源版本：{row.agent_version_id || "legacy"} {row.eval_case_id && `· EvalCase ${row.eval_case_id}`}</small>
           {!row.eval_case_id && <div className="form">
             <textarea value={corrections[row.id] ?? row.expected_answer ?? ""} placeholder="人工修正后的期望答案"
               onChange={(event) => setCorrections((values) => ({ ...values, [row.id]: event.target.value }))} />
             <input value={suiteIds[row.id] || ""} placeholder="加入 Suite ID（可选）"
               onChange={(event) => setSuiteIds((values) => ({ ...values, [row.id]: event.target.value }))} />
             <button onClick={() => convert(row.id)}>转成 EvalCase 并回归</button>
+          </div>}
+          {!!resolutionHistory[row.id]?.length && <div className="quality-sources"><h4>追加式人工复核</h4>
+            {resolutionHistory[row.id].map((item) => <div className="quality-assertion" key={item.id}>
+              <span className={`badge ${item.verdict === "confirmed_fixed" ? "passed" : "pending"}`}>{item.verdict}</span>
+              <span>{item.note}</span><small>{item.gate_run_id} · {new Date(item.created_at).toLocaleString()}</small>
+            </div>)}
+          </div>}
+          {row.eval_case_id && canResolve && <div className="form quality-review">
+            <input aria-label={`复核 GateRun ${row.id}`} value={reviewGateIds[row.id] || ""} placeholder="用于复核的 GateRun ID"
+              onChange={(event) => setReviewGateIds((values) => ({ ...values, [row.id]: event.target.value }))} />
+            <textarea aria-label={`复核理由 ${row.id}`} value={reviewNotes[row.id] || ""} placeholder="人工核对原 Run、当前 Run 和来源后填写理由"
+              onChange={(event) => setReviewNotes((values) => ({ ...values, [row.id]: event.target.value }))} />
+            <div className="form-actions"><button className="secondary" onClick={() => resolve(row, "needs_review")}>保留待复核</button>
+              <button onClick={() => resolve(row, "confirmed_fixed")}>人工确认已修复</button></div>
           </div>}
         </div>)}
       </section>

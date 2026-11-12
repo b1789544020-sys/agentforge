@@ -1,10 +1,14 @@
 """Pydantic schemas shared across the API layer."""
+
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from app.agent.schema import AgentDefinition, ResourceMap
+from app.quality.run import AnswerOutput, ExecutionOutput, RetrievalOutput, ToolOutput
 
 
 class OrmModel(BaseModel):
@@ -27,6 +31,15 @@ class AgentCreate(BaseModel):
     max_steps: int = 20
     tools: list[str] = Field(default_factory=list)
     config: dict[str, Any] = Field(default_factory=dict)
+
+
+class DefinitionSaveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    definition: AgentDefinition
+    base_version_id: str = Field(min_length=1)
+    resource_map: ResourceMap = Field(default_factory=ResourceMap)
+    secret_inputs: dict[str, str | None] = Field(default_factory=dict)
 
 
 class AgentUpdate(BaseModel):
@@ -63,6 +76,7 @@ class AgentOut(OrmModel):
 class RunCreate(BaseModel):
     input: str = Field(..., min_length=1)
     session_id: str | None = None
+    agent_version_id: str | None = None
     model: str | None = None
     temperature: float | None = None
     max_steps: int | None = None
@@ -111,6 +125,7 @@ class StepOut(OrmModel):
 class RunOut(OrmModel):
     id: str
     agent_id: str
+    agent_version_id: str | None = None
     input: str
     output: str | None = None
     status: str
@@ -125,9 +140,20 @@ class RunOut(OrmModel):
     trace: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class RunDetailOut(RunOut):
+    """Detail-only additive quality fields; legacy rows keep all five as null."""
+
+    quality_record_version: int | None = None
+    answer_output: AnswerOutput | None = None
+    tool_output: ToolOutput | None = None
+    retrieval_output: RetrievalOutput | None = None
+    execution_output: ExecutionOutput | None = None
+
+
 class RunSummary(OrmModel):
     id: str
     agent_id: str
+    agent_version_id: str | None = None
     input: str
     output: str | None = None
     status: str
@@ -273,7 +299,6 @@ class EvalUploadResponse(BaseModel):
     case_ids: list[str] = Field(default_factory=list)
 
 
-
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
@@ -381,9 +406,11 @@ class ExportRequest(BaseModel):
 __all__ = [
     "AgentCreate",
     "AgentUpdate",
+    "DefinitionSaveRequest",
     "AgentOut",
     "RunCreate",
     "RunOut",
+    "RunDetailOut",
     "RunSummary",
     "StepOut",
     "EvalCaseIn",

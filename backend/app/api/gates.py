@@ -8,10 +8,18 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
+from app.agent.schema import public_definition, public_legacy_dto
 from app.api.auth import get_principal, require_admin
+from app.api.schemas import (
+    EvalSuiteCreate,
+    EvalSuiteUpdate,
+    GateBypassCreate,
+    GatePolicyUpdate,
+    GateTrigger,
+)
 from app.audit import record_audit
-from app.api.schemas import EvalSuiteCreate, EvalSuiteUpdate, GateBypassCreate, GatePolicyUpdate, GateTrigger
 from app.database import get_session
 from app.dispatch import submit_gate
 from app.gates.service import create_gate_run, execute_due_gates, reevaluate_gate
@@ -33,14 +41,14 @@ def _actor(request: Request) -> str | None:
 
 
 def version_out(row: AgentVersion) -> dict[str, Any]:
-    return {
+    return public_legacy_dto({
         "id": row.id, "agent_id": row.agent_id, "team_id": row.team_id,
         "version_number": row.version_number,
         "snapshot": _json(row.snapshot, {}), "system_prompt": row.system_prompt,
         "model": row.model, "provider": row.provider, "temperature": row.temperature,
         "max_steps": row.max_steps, "tools": _json(row.tools, []), "config": _json(row.config, {}),
         "gate_status": row.gate_status, "created_by": row.created_by, "created_at": row.created_at,
-    }
+    })
 
 
 def suite_out(row: EvalSuite) -> dict[str, Any]:
@@ -54,8 +62,8 @@ def suite_out(row: EvalSuite) -> dict[str, Any]:
     }
 
 
-def gate_out(row: GateRun) -> dict[str, Any]:
-    return {
+def gate_out(row: GateRun, *, include_quality: bool = False) -> dict[str, Any]:
+    output = {
         "id": row.id, "agent_version_id": row.agent_version_id, "suite_id": row.suite_id,
         "eval_run_id": row.eval_run_id, "baseline_gate_id": row.baseline_gate_id,
         "triggered_by": row.triggered_by, "trigger_source": row.trigger_source,
@@ -64,6 +72,13 @@ def gate_out(row: GateRun) -> dict[str, Any]:
         "diff": _json(row.diff, []), "error": row.error, "created_at": row.created_at,
         "finished_at": row.finished_at,
     }
+    if include_quality:
+        output.update({
+            "quality_record_version": row.quality_record_version,
+            "conditions": _json(row.conditions, None),
+            "evidence": _json(row.evidence, None),
+        })
+    return output
 
 
 async def _validate_cases(session: AsyncSession, case_ids: list[str], agent: Agent | None = None) -> None:
@@ -115,6 +130,19 @@ async def list_versions(agent_id: str, session: AsyncSession = Depends(get_sessi
         .order_by(AgentVersion.version_number.desc())
     )).scalars().all()
     return [version_out(row) for row in rows]
+
+
+@router.get("/agents/{agent_id}/versions/{version_id}/definition")
+async def get_version_definition(
+    agent_id: str, version_id: str, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    row = await session.get(AgentVersion, version_id)
+    if row is None or row.agent_id != agent_id:
+        raise HTTPException(404, "agent version not found")
+    snapshot = _json(row.snapshot, {})
+    if not isinstance(snapshot, dict):
+        raise HTTPException(409, "agent version snapshot is invalid")
+    return public_definition(snapshot)
 
 
 @router.get("/agents/{agent_id}/versions/{version_id}")
@@ -218,7 +246,7 @@ async def copy_suite(suite_id: str, request: Request, session: AsyncSession = De
     return suite_out(row)
 
 
-@router.delete("/suites/{suite_id}", status_code=204)
+@router.delete("/suites/{suite_id}", status_code=204, response_model=None)
 async def delete_suite(suite_id: str, request: Request, session: AsyncSession = Depends(get_session)) -> None:
     row = await _suite_access(request, session, await session.get(EvalSuite, suite_id), write=True)
     record_audit(session, request, action="suite.delete", target_type="eval_suite", target_id=row.id,
@@ -250,9 +278,9 @@ async def trigger_gate(
 async def list_gates(
     agent_id: str, suite_id: str | None = None, session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    stmt = select(GateRun).join(AgentVersion, GateRun.agent_version_id == AgentVersion.id).where(
-        AgentVersion.agent_id == agent_id
-    )
+    stmt = select(GateRun).join(AgentVersion, GateRun.agent_version_id == AgentVersion.id).options(
+        defer(GateRun.conditions), defer(GateRun.evidence),
+    ).where(AgentVersion.agent_id == agent_id)
     if suite_id:
         stmt = stmt.where(GateRun.suite_id == suite_id)
     rows = (await session.execute(stmt.order_by(GateRun.created_at.desc()).limit(100))).scalars().all()
@@ -269,7 +297,7 @@ async def _nested_gate(session: AsyncSession, agent_id: str, gate_id: str) -> Ga
 
 @router.get("/agents/{agent_id}/gates/{gate_id}")
 async def get_gate(agent_id: str, gate_id: str, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
-    return gate_out(await _nested_gate(session, agent_id, gate_id))
+    return gate_out(await _nested_gate(session, agent_id, gate_id), include_quality=True)
 
 
 @router.post("/agents/{agent_id}/gates/{gate_id}/reevaluate")
@@ -335,4 +363,4 @@ async def run_due_gates() -> dict[str, Any]:
     return {"executed": await execute_due_gates()}
 
 
-__all__ = ["router", "version_out", "suite_out", "gate_out"]
+__all__ = ["gate_out", "router", "suite_out", "version_out"]

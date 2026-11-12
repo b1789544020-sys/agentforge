@@ -29,6 +29,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -375,6 +376,14 @@ class Run(Base):
     # Immutable per-run execution snapshot.  Request-level overrides must
     # never be written back to the Agent definition.
     config: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+
+    # Nullable additive quality evidence. NULL means legacy/not collected;
+    # empty arrays inside a v1 object mean an observation ran and found none.
+    quality_record_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    answer_output: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tool_output: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    retrieval_output: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    execution_output: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -846,6 +855,9 @@ class GateRun(Base):
     failed_case_ids: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     details: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     diff: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    quality_record_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    conditions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=_utcnow, server_default=func.now(), index=True
@@ -901,6 +913,9 @@ class Feedback(Base):
     )
     agent_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    agent_version_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("agent_versions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     rating: Mapped[str] = mapped_column(String(16), nullable=False)
     expected_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     context_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
@@ -908,6 +923,31 @@ class Feedback(Base):
     suite_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
+class FeedbackResolution(Base):
+    """Append-only authorized human judgment about a feedback regression."""
+
+    __tablename__ = "feedback_resolutions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    feedback_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("feedback.id", ondelete="CASCADE"), nullable=False
+    )
+    gate_run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("gate_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    verdict: Mapped[str] = mapped_column(String(32), nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, server_default=func.now()
+    )
+    __table_args__ = (
+        Index("ix_feedback_resolutions_feedback_created", "feedback_id", "created_at"),
+        Index("ix_feedback_resolutions_gate_case", "gate_run_id", "case_id"),
+    )
 
 
 class AlertRule(Base):
@@ -1079,6 +1119,12 @@ _JSON_TEXT_FIELDS: tuple[tuple[type, str], ...] = (
     (GateRun, "failed_case_ids"),
     (GateRun, "details"),
     (GateRun, "diff"),
+    (GateRun, "conditions"),
+    (GateRun, "evidence"),
+    (Run, "answer_output"),
+    (Run, "tool_output"),
+    (Run, "retrieval_output"),
+    (Run, "execution_output"),
     (AuditLog, "detail"),
     (ApprovalRequest, "payload"),
     (Feedback, "context_snapshot"),

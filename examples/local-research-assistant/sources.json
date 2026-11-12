@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "title": "AgentForge public research corpus",
+  "description": "为本地研究助理候选包编写的公开演示资料；不包含私人数据、密钥或外部网页抓取内容。",
+  "license": "MIT",
+  "license_file": "../../LICENSE",
+  "prepared_at": "2026-11-10",
+  "documents": [
+    {
+      "filename": "01-provider-and-runtime.md",
+      "title": "本地 Provider 与运行边界",
+      "origin": "AgentForge original public demonstration material",
+      "license": "MIT",
+      "bytes": 2210,
+      "sha256": "761bc884c446dc5c1561c086cb29fe72366126b6e77f9327a6b1dfb4b41dde7f"
+    },
+    {
+      "filename": "02-knowledge-and-citations.md",
+      "title": "知识检索、版本与引用",
+      "origin": "AgentForge original public demonstration material",
+      "license": "MIT",
+      "bytes": 3570,
+      "sha256": "157f2da74ca12b850851d6bf7b2bd666f96f5bae2e06a69c4feb96c4bc61feb2"
+    },
+    {
+      "filename": "03-quality-and-delivery.md",
+      "title": "质量、比较与交付",
+      "origin": "AgentForge original public demonstration material",
+      "license": "MIT",
+      "bytes": 2122,
+      "sha256": "aa72065c790ef422bf2e6431648108ef388b6e6643ae5ca4062c55e31227a3a8"
+    },
+    {
+      "filename": "04-team-and-safety.md",
+      "title": "团队边界与工具安全",
+      "origin": "AgentForge original public demonstration material",
+      "license": "MIT",
+      "bytes": 2141,
+      "sha256": "08ae566d0e750b2e02005735d631b07b8a671d77664eb107bf7ec54853038801"
+    }
+  ]
+}

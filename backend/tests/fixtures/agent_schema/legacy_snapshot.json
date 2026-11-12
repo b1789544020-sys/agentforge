@@ -1,0 +1,17 @@
+{
+  "name": "legacy-agent",
+  "team_id": null,
+  "description": "snapshot written before Agent Schema v1",
+  "system_prompt": "fallback {{ input }}",
+  "model": "mock-model",
+  "provider": "mock",
+  "temperature": 0.0,
+  "max_steps": 3,
+  "tools": ["echo"],
+  "config": {
+    "prompt_variables": {"audience": "开发者"},
+    "nested": {"api_key": "enc:v1:legacy-ciphertext"},
+    "plain": "kept"
+  },
+  "memory": {}
+}

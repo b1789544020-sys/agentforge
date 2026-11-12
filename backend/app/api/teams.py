@@ -187,7 +187,7 @@ async def change_member_role(team_id: str, user_id: str, payload: RoleChange, re
     return _member_out(row)
 
 
-@router.delete("/teams/{team_id}/members/{user_id}", status_code=204)
+@router.delete("/teams/{team_id}/members/{user_id}", status_code=204, response_model=None)
 async def remove_member(team_id: str, user_id: str, request: Request, session: AsyncSession = Depends(get_session)) -> None:
     if get_principal(request).role != "admin":
         await authorize(request, session, "member:manage", team_id)

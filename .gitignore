@@ -19,6 +19,9 @@ env/
 # ── Scratch / 调试临时文件 ──────────────
 # 仓库自带的临时目录永远不跟踪。
 .scratch/
+logs/diagnostics/
+scripts/diagnostics/
+Demo视频是怎么做出来的？.txt
 
 # 本地诊断 / 一次性调试目录（从桌面收拢过来的脚手架）
 backend/tests/_local_diagnostics/

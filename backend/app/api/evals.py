@@ -119,7 +119,7 @@ def _resolve_scorer(name: str | None):
     if not name:
         return None  # runner falls back to its own default
     # Import lazily to avoid a circular import at module load time.
-    from app.eval.scorer import get_scorer
+    from app.eval.scorer import MetricScorer, get_scorer
     if name in _OBJECT_SCORERS:
         return get_scorer(name)
     registry = Metrics.registry()
@@ -128,7 +128,11 @@ def _resolve_scorer(name: str | None):
             status_code=400,
             detail=f"unknown scorer '{name}', available: {sorted(list(registry) + sorted(_OBJECT_SCORERS))}",
         )
-    return registry[name]
+    # Legacy evaluations call a metric as ``metric(output, expected)`` while
+    # quality gates require the structured EvalScorer interface.  The adapter
+    # supports both, so a persisted scorer name behaves consistently in either
+    # execution path.
+    return MetricScorer(name, registry[name])
 
 
 # ---------------------------------------------------------------------------
